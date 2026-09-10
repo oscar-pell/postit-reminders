@@ -26,7 +26,7 @@ import webbrowser
 from pathlib import Path
 
 # Versione applicazione e coordinate repository GitHub
-APP_VERSION = "1.1.2"
+APP_VERSION = "1.1.3"
 GITHUB_REPO = "oscar-pell/postit-reminders"
 GITHUB_RELEASES_URL = f"https://github.com/{GITHUB_REPO}/releases"
 GITHUB_API_LATEST = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
@@ -1362,6 +1362,21 @@ class PostitManagerApp:
         self.root.geometry(f"{win_w}x{win_h}+{pos_x}+{pos_y}")
         self.root.minsize(1040, 700)
 
+        # Apertura a tutto schermo / massimizzata automatica per la massima comodità visiva
+        try:
+            self.root.attributes("-zoomed", True)
+        except Exception:
+            try:
+                self.root.state("zoomed")
+            except Exception:
+                try:
+                    self.root.geometry(f"{screen_w}x{screen_h}+0+0")
+                except Exception:
+                    pass
+
+        self.is_fullscreen = False
+        self.root.bind("<F11>", self.toggle_fullscreen)
+
         apply_app_icon(self.root)
 
         self.editing_id = None
@@ -1377,6 +1392,11 @@ class PostitManagerApp:
 
         # Controllo automatico aggiornamenti GitHub in background
         self.root.after(1500, lambda: self.check_updates(manual=False))
+
+    def toggle_fullscreen(self, event=None):
+        """Alterna modalità schermo intero (F11)."""
+        self.is_fullscreen = not getattr(self, "is_fullscreen", False)
+        self.root.attributes("-fullscreen", self.is_fullscreen)
 
     def _init_styles(self):
         self.color_bg = "#F8FAFC"
