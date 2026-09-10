@@ -168,9 +168,17 @@ sudo apt update
 sudo apt install -y python3 python3-tk libnotify-bin cron
 ```
 
-#### 🔹 Fedora / RHEL / Rocky Linux:
+#### 🔹 Fedora / RHEL / Rocky Linux (inclusi Silverblue e Bazzite):
 ```bash
-sudo dnf install -y python3 python3-tkinter libnotify cronie
+# Fedora Standard / RHEL / AlmaLinux:
+sudo dnf install -y python3 python3-tkinter libnotify
+
+# Fedora 41+ (con dnf5):
+sudo dnf5 install -y python3 python3-tkinter libnotify
+
+# Fedora Silverblue / Kinoite / Bazzite / Atomic Desktops (rpm-ostree):
+sudo rpm-ostree install python3-tkinter libnotify
+# oppure avvia l'ambiente tramite container: toolbox enter
 ```
 
 #### 🔹 Arch Linux / Manjaro / EndeavourOS:

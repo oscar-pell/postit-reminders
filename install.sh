@@ -28,7 +28,7 @@ ICONS_BASE="$HOME/.local/share/icons/hicolor"
 APPS_DIR="$HOME/.local/share/applications"
 SYSTEMD_USER_DIR="$HOME/.config/systemd/user"
 
-# 1. Rilevamento Distribuzione Linux
+# 1. Rilevamento Distribuzione Linux e Gestore Pacchetti
 DISTRO="unknown"
 if [ -f /etc/os-release ]; then
     . /etc/os-release
@@ -36,7 +36,31 @@ if [ -f /etc/os-release ]; then
     DISTRO_LIKE="$ID_LIKE"
 fi
 
-echo -e "${C_CYAN}[1/6]${C_RESET} Rilevata distribuzione Linux: ${C_BOLD}$DISTRO${C_RESET} ($PRETTY_NAME)"
+PKG_MGR="unknown"
+if command -v dnf5 &>/dev/null; then
+    PKG_MGR="dnf5"
+elif command -v dnf &>/dev/null; then
+    PKG_MGR="dnf"
+elif command -v microdnf &>/dev/null; then
+    PKG_MGR="microdnf"
+elif command -v rpm-ostree &>/dev/null; then
+    PKG_MGR="rpm-ostree"
+elif command -v yum &>/dev/null; then
+    PKG_MGR="yum"
+elif command -v apt-get &>/dev/null; then
+    PKG_MGR="apt-get"
+elif command -v apt &>/dev/null; then
+    PKG_MGR="apt"
+elif command -v pacman &>/dev/null; then
+    PKG_MGR="pacman"
+elif command -v zypper &>/dev/null; then
+    PKG_MGR="zypper"
+elif command -v apk &>/dev/null; then
+    PKG_MGR="apk"
+fi
+
+echo -e "${C_CYAN}[1/6]${C_RESET} Rilevata distribuzione: ${C_BOLD}$DISTRO${C_RESET} ($PRETTY_NAME)"
+echo -e "      Gestore pacchetti rilevato: ${C_BOLD}$PKG_MGR${C_RESET}"
 
 # 2. Controllo e Installazione Dipendenze di Sistema
 echo -e "${C_CYAN}[2/6]${C_RESET} Verifica dipendenze (Python 3, Tkinter, libnotify)..."
@@ -62,20 +86,52 @@ try_install_package() {
     return $res
 }
 
+install_sys_package() {
+    local target="$1" # "python" o "tkinter"
+    local cmd=""
+
+    case "$PKG_MGR" in
+        dnf5)
+            [ "$target" = "python" ] && cmd="dnf5 install -y python3" || cmd="dnf5 install -y python3-tkinter libnotify"
+            ;;
+        dnf)
+            [ "$target" = "python" ] && cmd="dnf install -y python3" || cmd="dnf install -y python3-tkinter libnotify"
+            ;;
+        microdnf)
+            [ "$target" = "python" ] && cmd="microdnf install -y python3" || cmd="microdnf install -y python3-tkinter libnotify"
+            ;;
+        rpm-ostree)
+            [ "$target" = "python" ] && cmd="rpm-ostree install --idempotent -y python3" || cmd="rpm-ostree install --idempotent -y python3-tkinter libnotify"
+            ;;
+        yum)
+            [ "$target" = "python" ] && cmd="yum install -y python3" || cmd="yum install -y python3-tkinter libnotify"
+            ;;
+        apt-get|apt)
+            [ "$target" = "python" ] && cmd="apt-get update -y && apt-get install -y python3" || cmd="apt-get update -y && apt-get install -y python3-tk libnotify-bin"
+            ;;
+        pacman)
+            [ "$target" = "python" ] && cmd="pacman -S --needed --noconfirm python" || cmd="pacman -S --needed --noconfirm tk libnotify"
+            ;;
+        zypper)
+            [ "$target" = "python" ] && cmd="zypper install -y python3" || cmd="zypper install -y python3-tk libnotify-tools"
+            ;;
+        apk)
+            [ "$target" = "python" ] && cmd="apk add python3" || cmd="apk add py3-tkinter libnotify"
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+
+    try_install_package "$cmd"
+}
+
 # Controllo Python 3
 if ! check_python; then
     echo -e "${C_RED}Python 3 non trovato.${C_RESET}"
-    if command -v sudo &>/dev/null || [ "$EUID" -eq 0 ]; then
-        echo -e "${C_YELLOW}Tentativo di installazione di Python 3...${C_RESET}"
-        if command -v dnf &>/dev/null; then
-            try_install_package "dnf install -y python3" || true
-        elif command -v apt-get &>/dev/null; then
-            try_install_package "apt-get update -y && apt-get install -y python3" || true
-        elif command -v pacman &>/dev/null; then
-            try_install_package "pacman -S --needed --noconfirm python" || true
-        elif command -v zypper &>/dev/null; then
-            try_install_package "zypper install -y python3" || true
-        fi
+    if [ "$PKG_MGR" != "unknown" ] && ([ "$EUID" -eq 0 ] || command -v sudo &>/dev/null); then
+        echo -e "${C_YELLOW}Tentativo di installazione di Python 3 tramite $PKG_MGR...${C_RESET}"
+        install_sys_package "python" || true
     fi
     if ! check_python; then
         echo -e "${C_RED}[Errore critico] Python 3 è indispensabile per l'applicazione. Installalo prima di procedere.${C_RESET}"
@@ -85,7 +141,7 @@ fi
 
 # Controllo Tkinter
 if ! check_tkinter; then
-    echo -e "${C_YELLOW}Modulo Tkinter non trovato per Python 3.${C_RESET}"
+    echo -e "${C_YELLOW}Modulo grafico Tkinter non trovato per Python 3.${C_RESET}"
     
     SUDO_AVAILABLE=false
     if [ "$EUID" -eq 0 ]; then
@@ -94,17 +150,9 @@ if ! check_tkinter; then
         SUDO_AVAILABLE=true
     fi
 
-    if [ "$SUDO_AVAILABLE" = true ]; then
-        echo -e "${C_YELLOW}Tentativo di installazione dipendenze di sistema (potrebbe richiedere password di sudo)...${C_RESET}"
-        if command -v dnf &>/dev/null; then
-            try_install_package "dnf install -y python3-tkinter libnotify" || true
-        elif command -v apt-get &>/dev/null; then
-            try_install_package "apt-get update -y && apt-get install -y python3-tk libnotify-bin" || true
-        elif command -v pacman &>/dev/null; then
-            try_install_package "pacman -S --needed --noconfirm tk libnotify" || true
-        elif command -v zypper &>/dev/null; then
-            try_install_package "zypper install -y python3-tk libnotify-tools" || true
-        fi
+    if [ "$SUDO_AVAILABLE" = true ] && [ "$PKG_MGR" != "unknown" ]; then
+        echo -e "${C_YELLOW}Tentativo di installazione dipendenze tramite $PKG_MGR (potrebbe richiedere password di sudo)...${C_RESET}"
+        install_sys_package "tkinter" || true
     fi
 
     if check_tkinter; then
@@ -112,24 +160,59 @@ if ! check_tkinter; then
     else
         echo ""
         echo -e "${C_BOLD}${C_YELLOW}┌────────────────────────────────────────────────────────────────────────┐${C_RESET}"
-        echo -e "${C_BOLD}${C_YELLOW}│ ⚠️  AVVISO: Permessi sudo non disponibili o installazione saltata      │${C_RESET}"
+        echo -e "${C_BOLD}${C_YELLOW}│ ⚠️  AVVISO: Pacchetti di sistema non installati o sudo non disponibile │${C_RESET}"
         echo -e "${C_BOLD}${C_YELLOW}└────────────────────────────────────────────────────────────────────────┘${C_RESET}"
         echo -e "L'applicazione verrà comunque installata regolarmente nella tua cartella utente (~/.local/bin)."
         echo -e "Per avviare l'interfaccia grafica su questa macchina, chiedi all'amministratore di sistema"
-        echo -e "oppure esegui con un account dotato di privilegi sudo:"
-        if command -v dnf &>/dev/null; then
-            echo -e "  ${C_BOLD}${C_CYAN}sudo dnf install -y python3-tkinter libnotify${C_RESET}"
-        elif command -v apt-get &>/dev/null; then
-            echo -e "  ${C_BOLD}${C_CYAN}sudo apt install -y python3-tk libnotify-bin${C_RESET}"
-        elif command -v pacman &>/dev/null; then
-            echo -e "  ${C_BOLD}${C_CYAN}sudo pacman -S --needed tk libnotify${C_RESET}"
-        elif command -v zypper &>/dev/null; then
-            echo -e "  ${C_BOLD}${C_CYAN}sudo zypper install -y python3-tk libnotify-tools${C_RESET}"
+        echo -e "oppure esegui con un account dotato di privilegi di amministratore:"
+        case "$PKG_MGR" in
+            dnf5)
+                echo -e "  ${C_BOLD}${C_CYAN}sudo dnf5 install -y python3-tkinter libnotify${C_RESET}"
+                ;;
+            dnf)
+                echo -e "  ${C_BOLD}${C_CYAN}sudo dnf install -y python3-tkinter libnotify${C_RESET}"
+                ;;
+            microdnf)
+                echo -e "  ${C_BOLD}${C_CYAN}sudo microdnf install -y python3-tkinter libnotify${C_RESET}"
+                ;;
+            rpm-ostree)
+                echo -e "  ${C_BOLD}${C_CYAN}sudo rpm-ostree install python3-tkinter libnotify${C_RESET}"
+                echo -e "  ${C_YELLOW}Nota: Su sistemi Fedora Silverblue/Atomic/Bazzite puoi anche usare:${C_RESET}"
+                echo -e "    ${C_CYAN}toolbox enter${C_RESET}"
+                ;;
+            yum)
+                echo -e "  ${C_BOLD}${C_CYAN}sudo yum install -y python3-tkinter libnotify${C_RESET}"
+                ;;
+            apt-get|apt)
+                echo -e "  ${C_BOLD}${C_CYAN}sudo apt install -y python3-tk libnotify-bin${C_RESET}"
+                ;;
+            pacman)
+                echo -e "  ${C_BOLD}${C_CYAN}sudo pacman -S --needed tk libnotify${C_RESET}"
+                ;;
+            zypper)
+                echo -e "  ${C_BOLD}${C_CYAN}sudo zypper install -y python3-tk libnotify-tools${C_RESET}"
+                ;;
+            apk)
+                echo -e "  ${C_BOLD}${C_CYAN}sudo apk add py3-tkinter libnotify${C_RESET}"
+                ;;
+            *)
+                echo -e "  ${C_BOLD}${C_CYAN}Fedora/RHEL: sudo dnf install -y python3-tkinter (o dnf5 / rpm-ostree)${C_RESET}"
+                echo -e "  ${C_BOLD}${C_CYAN}Ubuntu/Debian: sudo apt install -y python3-tk${C_RESET}"
+                ;;
+        esac
+        echo ""
+        echo -e "Alternative in spazio utente (senza bisogno di sudo):"
+        if command -v conda &>/dev/null; then
+            echo -e "  • ${C_BOLD}Conda (trovato nel sistema):${C_RESET} ${C_CYAN}conda install -c conda-forge tk${C_RESET}"
         else
-            echo -e "  ${C_BOLD}${C_CYAN}Installa 'python3-tkinter' per la tua distribuzione${C_RESET}"
+            echo -e "  • ${C_BOLD}Ambiente Conda / Mamba:${C_RESET} ${C_CYAN}conda install -c conda-forge tk${C_RESET}"
         fi
-        echo -e "Se utilizzi Conda/Mamba nel tuo account utente, puoi anche eseguire:"
-        echo -e "  ${C_BOLD}${C_CYAN}conda install -c conda-forge tk${C_RESET}"
+        if command -v brew &>/dev/null; then
+            echo -e "  • ${C_BOLD}Homebrew (trovato nel sistema):${C_RESET} ${C_CYAN}brew install python-tk${C_RESET}"
+        fi
+        if command -v toolbox &>/dev/null; then
+            echo -e "  • ${C_BOLD}Fedora Toolbox:${C_RESET} esegui l'app all'interno di un container toolbox (${C_CYAN}toolbox enter${C_RESET})"
+        fi
         echo ""
     fi
 else
