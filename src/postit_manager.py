@@ -26,7 +26,7 @@ import webbrowser
 from pathlib import Path
 
 # Versione applicazione
-APP_VERSION = "1.1.5"
+APP_VERSION = "1.1.6"
 GITHUB_REPO = "oscar-pell/postit-reminders"
 GITHUB_RELEASES_URL = f"https://github.com/{GITHUB_REPO}/releases"
 GITHUB_API_LATEST = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
@@ -219,7 +219,7 @@ TRANSLATIONS = {
 
         "table_section_title": "Elenco Promemoria",
         "table_active_count": "Promemoria Attivi ({count})",
-        "table_double_click_hint": "💡 Doppio click per mettere sul desktop",
+        "table_double_click_hint": "💡 Doppio click per desktop • Ctrl/Shift per selezione multipla • Canc per eliminare",
         "col_time": "Orario",
         "col_freq": "Frequenza",
         "col_color": "Colore",
@@ -228,6 +228,9 @@ TRANSLATIONS = {
         "links_count": "{count} link",
         "no_links": "—",
 
+        "btn_select_all": "Seleziona Tutti",
+        "btn_deselect_all": "Deseleziona",
+        "menu_select_all": "Seleziona tutti",
         "btn_desktop": "📌 Metti sul Desktop",
         "btn_test_alarm": "👁️ Testa Allarme Ora",
         "btn_set_as_preset": "⭐ Imposta come Preset",
@@ -254,6 +257,8 @@ TRANSLATIONS = {
         "msg_save_error": "Impossibile salvare il promemoria.",
         "msg_delete_confirm_title": "Conferma eliminazione",
         "msg_delete_confirm_body": "Vuoi davvero eliminare '{title}'?",
+        "msg_delete_multiple_confirm_title": "Conferma eliminazione multipla",
+        "msg_delete_multiple_confirm_body": "Vuoi davvero eliminare i {count} promemoria selezionati?",
         "msg_delete_error": "Impossibile eliminare il promemoria.",
         "msg_launch_error_title": "Errore Avvio",
         "msg_launch_error_body": "Impossibile avviare il Post-it sul desktop: {error}",
@@ -298,6 +303,9 @@ TRANSLATIONS = {
         "status_reminder_loaded": "Caricato promemoria: '{title}'",
         "status_reminder_saved": "✓ Promemoria '{title}' salvato!",
         "status_reminder_deleted": "Promemoria eliminato.",
+        "status_reminders_deleted_multiple": "✓ Eliminati {count} promemoria con successo.",
+        "status_multiple_selected": "{count} promemoria selezionati. Premi Canc o clicca Elimina.",
+        "status_multiple_desktop_launched": "📌 Posizionati {count} post-it sul desktop.",
         "status_desktop_launched": "📌 Post-it posizionato sul desktop (processo indipendente).",
         "status_alarm_tested": "🚨 Test sovraimpressione allarme inviato a schermo!",
 
@@ -371,7 +379,7 @@ TRANSLATIONS = {
 
         "table_section_title": "Reminders List",
         "table_active_count": "Active Reminders ({count})",
-        "table_double_click_hint": "💡 Double-click to pin on desktop",
+        "table_double_click_hint": "💡 Double-click for desktop • Ctrl/Shift for multi-select • Del to delete",
         "col_time": "Time",
         "col_freq": "Frequency",
         "col_color": "Color",
@@ -380,6 +388,9 @@ TRANSLATIONS = {
         "links_count": "{count} links",
         "no_links": "—",
 
+        "btn_select_all": "Select All",
+        "btn_deselect_all": "Deselect All",
+        "menu_select_all": "Select all",
         "btn_desktop": "📌 Put on Desktop",
         "btn_test_alarm": "👁️ Test Alarm Now",
         "btn_set_as_preset": "⭐ Set as Preset",
@@ -406,6 +417,8 @@ TRANSLATIONS = {
         "msg_save_error": "Could not save the reminder.",
         "msg_delete_confirm_title": "Confirm Deletion",
         "msg_delete_confirm_body": "Do you really want to delete '{title}'?",
+        "msg_delete_multiple_confirm_title": "Confirm Multiple Deletion",
+        "msg_delete_multiple_confirm_body": "Do you really want to delete the {count} selected reminders?",
         "msg_delete_error": "Could not delete reminder.",
         "msg_launch_error_title": "Launch Error",
         "msg_launch_error_body": "Could not launch sticky note on desktop: {error}",
@@ -450,6 +463,9 @@ TRANSLATIONS = {
         "status_reminder_loaded": "Loaded reminder: '{title}'",
         "status_reminder_saved": "✓ Reminder '{title}' saved!",
         "status_reminder_deleted": "Reminder deleted.",
+        "status_reminders_deleted_multiple": "✓ Successfully deleted {count} reminders.",
+        "status_multiple_selected": "{count} reminders selected. Press Del or click Delete.",
+        "status_multiple_desktop_launched": "📌 Placed {count} sticky notes on desktop.",
         "status_desktop_launched": "📌 Sticky note placed on desktop (independent process).",
         "status_alarm_tested": "🚨 Alarm overlay test sent to screen!",
 
@@ -1825,6 +1841,8 @@ class PostitManagerApp:
 
         # List & Table
         self.lbl_hint.config(text=t("table_double_click_hint", self.lang))
+        if hasattr(self, "btn_select_all"):
+            self.btn_select_all.config(text="🔘 " + t("btn_select_all", self.lang))
         self.tree.heading("time", text=t("col_time", self.lang))
         self.tree.heading("frequency", text=t("col_freq", self.lang))
         self.tree.heading("color", text=t("col_color", self.lang))
@@ -2030,14 +2048,30 @@ class PostitManagerApp:
         self.lbl_list_count = tk.Label(header_row, text=t("table_section_title", self.lang), font=(self.sys_font, 12, "bold"), bg=self.color_card, fg=self.color_text)
         self.lbl_list_count.pack(side=tk.LEFT)
 
-        self.lbl_hint = tk.Label(header_row, text=t("table_double_click_hint", self.lang), font=(self.sys_font, 9, "italic"), bg=self.color_card, fg="#64748B")
+        self.btn_select_all = tk.Button(
+            header_row,
+            text="🔘 " + t("btn_select_all", self.lang),
+            font=(self.sys_font, 8, "bold"),
+            bg="#EFF6FF",
+            fg="#1D4ED8",
+            activebackground="#DBEAFE",
+            activeforeground="#1E40AF",
+            relief=tk.FLAT,
+            cursor="hand2",
+            padx=8,
+            pady=2,
+            command=self.toggle_select_all
+        )
+        self.btn_select_all.pack(side=tk.LEFT, padx=(12, 0))
+
+        self.lbl_hint = tk.Label(header_row, text=t("table_double_click_hint", self.lang), font=(self.sys_font, 8, "italic"), bg=self.color_card, fg="#64748B")
         self.lbl_hint.pack(side=tk.RIGHT)
 
         table_frame = tk.Frame(card, bg=self.color_card)
         table_frame.pack(fill=tk.BOTH, expand=True)
 
         columns = ("time", "frequency", "color", "title", "links")
-        self.tree = ttk.Treeview(table_frame, columns=columns, show="headings", selectmode="browse")
+        self.tree = ttk.Treeview(table_frame, columns=columns, show="headings", selectmode="extended")
 
         self.tree.heading("time", text=t("col_time", self.lang))
         self.tree.heading("frequency", text=t("col_freq", self.lang))
@@ -2059,6 +2093,13 @@ class PostitManagerApp:
 
         self.tree.bind("<<TreeviewSelect>>", self.on_tree_select)
         self.tree.bind("<Double-1>", lambda e: self.put_selected_on_desktop())
+        self.tree.bind("<Delete>", lambda e: self.delete_selected_reminder())
+        self.tree.bind("<BackSpace>", lambda e: self.delete_selected_reminder())
+        self.tree.bind("<Control-a>", self.toggle_select_all)
+        self.tree.bind("<Control-A>", self.toggle_select_all)
+        self.tree.bind("<Button-3>", self.show_tree_context_menu)
+
+        self.tree_menu = tk.Menu(self.root, tearoff=0)
 
         action_bar = tk.Frame(card, bg=self.color_card)
         action_bar.pack(fill=tk.X, pady=(10, 0))
@@ -2412,10 +2453,79 @@ class PostitManagerApp:
         self.entry_l2_url.delete(0, tk.END)
         self.lbl_status.config(text=t("status_form_cleared", self.lang))
 
-    def on_tree_select(self, event):
+    def toggle_select_all(self, event=None):
+        """Seleziona o deseleziona tutti i promemoria nella tabella."""
+        all_items = self.tree.get_children()
+        if not all_items:
+            return "break"
+        current_sel = self.tree.selection()
+        if len(current_sel) == len(all_items):
+            self.tree.selection_set([])
+            self.clear_form()
+            if hasattr(self, "btn_select_all"):
+                self.btn_select_all.config(text="🔘 " + t("btn_select_all", self.lang))
+            self.btn_delete.config(text=t("btn_delete", self.lang))
+        else:
+            self.tree.selection_set(all_items)
+            self.on_tree_select(None)
+            if hasattr(self, "btn_select_all"):
+                self.btn_select_all.config(text="✖ " + t("btn_deselect_all", self.lang))
+        return "break"
+
+    def show_tree_context_menu(self, event):
+        """Mostra il menu contestuale al click col tasto destro sulla tabella."""
+        row_id = self.tree.identify_row(event.y)
+        if row_id:
+            if row_id not in self.tree.selection():
+                self.tree.selection_set(row_id)
+                self.on_tree_select(None)
+
         selected = self.tree.selection()
         if not selected:
             return
+
+        self.tree_menu.delete(0, tk.END)
+        count = len(selected)
+
+        desk_lbl = f"📌 {t('btn_desktop', self.lang)} ({count})" if count > 1 else f"📌 {t('btn_desktop', self.lang)}"
+        self.tree_menu.add_command(label=desk_lbl, command=self.put_selected_on_desktop)
+
+        if count == 1:
+            self.tree_menu.add_command(label=f"👁️ {t('btn_test_alarm', self.lang)}", command=self.test_alarm_now)
+            self.tree_menu.add_command(label=f"⭐ {t('btn_set_as_preset', self.lang)}", command=self.set_selected_as_preset)
+
+        self.tree_menu.add_separator()
+        del_lbl = f"🗑️ {t('btn_delete', self.lang)} ({count})  [Canc]" if count > 1 else f"🗑️ {t('btn_delete', self.lang)}  [Canc]"
+        self.tree_menu.add_command(label=del_lbl, command=self.delete_selected_reminder)
+        self.tree_menu.add_separator()
+        self.tree_menu.add_command(label=f"🔘 {t('menu_select_all', self.lang)}  [Ctrl+A]", command=self.toggle_select_all)
+
+        try:
+            self.tree_menu.post(event.x_root, event.y_root)
+        except Exception:
+            pass
+
+    def on_tree_select(self, event):
+        selected = self.tree.selection()
+        if not selected:
+            self.btn_delete.config(text=t("btn_delete", self.lang))
+            if hasattr(self, "btn_select_all"):
+                self.btn_select_all.config(text="🔘 " + t("btn_select_all", self.lang))
+            return
+
+        all_count = len(self.tree.get_children())
+        if hasattr(self, "btn_select_all"):
+            if len(selected) == all_count and all_count > 0:
+                self.btn_select_all.config(text="✖ " + t("btn_deselect_all", self.lang))
+            else:
+                self.btn_select_all.config(text="🔘 " + t("btn_select_all", self.lang))
+
+        if len(selected) > 1:
+            self.btn_delete.config(text=f"🗑️ {t('btn_delete', self.lang)} ({len(selected)})")
+            self.lbl_status.config(text=t("status_multiple_selected", self.lang, count=len(selected)))
+            return
+
+        self.btn_delete.config(text=t("btn_delete", self.lang))
         item_id = selected[0]
         rem = ReminderStore.get_by_id(item_id)
         if not rem:
@@ -2518,14 +2628,23 @@ class PostitManagerApp:
             messagebox.showwarning(t("msg_no_selection_title", self.lang), t("msg_no_selection_delete", self.lang))
             return
 
-        item_id = selected[0]
-        rem = ReminderStore.get_by_id(item_id)
-        title = rem.get("title", "") if rem else ""
+        count = len(selected)
+        if count == 1:
+            rem = ReminderStore.get_by_id(selected[0])
+            title = rem.get("title", "") if rem else ""
+            confirm_msg = t("msg_delete_confirm_body", self.lang, title=title)
+        else:
+            confirm_msg = t("msg_delete_multiple_confirm_body", self.lang, count=count)
 
-        if not messagebox.askyesno(t("msg_delete_confirm_title", self.lang), t("msg_delete_confirm_body", self.lang, title=title)):
+        if not messagebox.askyesno(t("msg_delete_confirm_title", self.lang), confirm_msg, parent=self.root):
             return
 
-        if ReminderStore.delete_by_id(item_id):
+        deleted_count = 0
+        for item_id in selected:
+            if ReminderStore.delete_by_id(item_id):
+                deleted_count += 1
+
+        if deleted_count > 0:
             reminders = ReminderStore.load_all()
             try:
                 CronManager.sync_reminders(reminders, lang=self.lang)
@@ -2535,30 +2654,43 @@ class PostitManagerApp:
             self.refresh_reminders_table()
             self.clear_form()
             self.check_system_status()
-            self.lbl_status.config(text=t("status_reminder_deleted", self.lang))
+            if deleted_count > 1:
+                status_txt = t("status_reminders_deleted_multiple", self.lang, count=deleted_count)
+            else:
+                status_txt = t("status_reminder_deleted", self.lang)
+            self.lbl_status.config(text=status_txt)
         else:
             messagebox.showerror(t("msg_error_title", self.lang), t("msg_delete_error", self.lang))
 
     def put_selected_on_desktop(self):
         selected = self.tree.selection()
         if selected:
-            rem_id = selected[0]
+            rem_ids = list(selected)
         elif self.editing_id:
-            rem_id = self.editing_id
+            rem_ids = [self.editing_id]
         else:
             reminders = ReminderStore.load_all()
-            rem_id = reminders[0]["id"] if reminders else "benvenuto-01"
+            rem_ids = [reminders[0]["id"]] if reminders else ["benvenuto-01"]
 
         runner = str(RUNNER_SH.resolve()) if RUNNER_SH.exists() else str(Path(__file__).resolve())
-        try:
-            subprocess.Popen(
-                [runner, "--desktop", "--id", rem_id],
-                start_new_session=True,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL
-            )
+        launched = 0
+        for rem_id in rem_ids:
+            try:
+                subprocess.Popen(
+                    [runner, "--desktop", "--id", rem_id],
+                    start_new_session=True,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL
+                )
+                launched += 1
+            except Exception as e:
+                messagebox.showerror(t("msg_launch_error_title", self.lang), t("msg_launch_error_body", self.lang, error=e))
+                break
+
+        if launched > 1:
+            self.lbl_status.config(text=t("status_multiple_desktop_launched", self.lang, count=launched))
+        elif launched == 1:
             self.lbl_status.config(text=t("status_desktop_launched", self.lang))
-        except Exception as e:
             messagebox.showerror(t("msg_launch_error_title", self.lang), t("msg_launch_error_body", self.lang, error=e))
 
     def test_alarm_now(self):
@@ -2648,22 +2780,21 @@ class PostitManagerApp:
         tag = release_info.get("tag_name", "v1.x.x")
         dlg = tk.Toplevel(self.root)
         dlg.title(t("msg_update_window_title", self.lang))
-        dlg.geometry("640x520")
-        dlg.minsize(580, 460)
         dlg.transient(self.root)
         dlg.grab_set()
         dlg.configure(bg="#FFFFFF")
         apply_app_icon(dlg)
 
-        try:
-            dlg_w, dlg_h = 640, 520
-            root_w = max(self.root.winfo_width(), 640)
-            root_h = max(self.root.winfo_height(), 520)
-            x = self.root.winfo_rootx() + (root_w - dlg_w) // 2
-            y = self.root.winfo_rooty() + (root_h - dlg_h) // 2
-            dlg.geometry(f"{dlg_w}x{dlg_h}+{max(0, x)}+{max(0, y)}")
-        except Exception:
-            dlg.geometry("640x520")
+        # Calcolo dimensioni generose e centratura perfetta sullo schermo per evitare che la finestra sia piccola o tagliata
+        screen_w = dlg.winfo_screenwidth()
+        screen_h = dlg.winfo_screenheight()
+        dlg_w = min(760, max(660, int(screen_w * 0.55)))
+        dlg_h = min(600, max(520, int(screen_h * 0.65)))
+        pos_x = max(20, (screen_w - dlg_w) // 2)
+        pos_y = max(20, (screen_h - dlg_h) // 2 - 25)
+
+        dlg.geometry(f"{dlg_w}x{dlg_h}+{pos_x}+{pos_y}")
+        dlg.minsize(620, 480)
 
         # 1. Header fisso in alto
         hdr = tk.Frame(dlg, bg="#EFF6FF", padx=20, pady=14)
@@ -2703,6 +2834,7 @@ class PostitManagerApp:
 
         txt_notes = tk.Text(
             txt_container,
+            height=8,
             font=(self.sys_font, 9),
             bg="#F8FAFC",
             relief=tk.SOLID,
