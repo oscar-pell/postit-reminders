@@ -1,0 +1,14 @@
+[Unit]
+Description=Post-it Reminders Background Monitor Daemon
+Documentation=https://github.com
+After=graphical-session.target
+
+[Service]
+Type=simple
+ExecStart=%h/.local/bin/postit-runner.sh --daemon
+Restart=always
+RestartSec=5
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=default.target

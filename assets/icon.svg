@@ -1,0 +1,50 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256">
+  <defs>
+    <filter id="shadow" x="-10%" y="-10%" width="130%" height="130%">
+      <feDropShadow dx="3" dy="6" stdDeviation="6" flood-color="#000000" flood-opacity="0.25"/>
+    </filter>
+    <linearGradient id="paperGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#FEF08A"/>
+      <stop offset="100%" stop-color="#FACC15"/>
+    </linearGradient>
+    <linearGradient id="pinGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#EF4444"/>
+      <stop offset="100%" stop-color="#B91C1C"/>
+    </linearGradient>
+    <linearGradient id="tapeGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#FDE047"/>
+      <stop offset="100%" stop-color="#EAB308"/>
+    </linearGradient>
+  </defs>
+  
+  <!-- Post-it Paper Body with shadow -->
+  <g filter="url(#shadow)">
+    <!-- Base folded sheet -->
+    <path d="M 40 38 L 216 38 C 220 38 224 42 224 46 L 224 176 L 176 224 L 44 224 C 40 224 36 220 36 216 L 36 46 C 36 42 40 38 44 38 Z" 
+          fill="url(#paperGrad)" stroke="#CA8A04" stroke-width="2"/>
+    <!-- Folded corner back -->
+    <path d="M 176 176 L 224 176 L 176 224 Z" fill="#CA8A04" opacity="0.35"/>
+    <!-- Folded flap -->
+    <path d="M 176 176 L 224 176 L 176 224 Z" fill="#FEF08A" stroke="#CA8A04" stroke-width="1.5"/>
+  </g>
+
+  <!-- Top Sticky Band -->
+  <rect x="37" y="39" width="186" height="34" rx="4" fill="url(#tapeGrad)" opacity="0.75"/>
+
+  <!-- Memo text lines representation -->
+  <line x1="68" y1="98" x2="188" y2="98" stroke="#854D0E" stroke-width="7" stroke-linecap="round" opacity="0.7"/>
+  <line x1="68" y1="130" x2="168" y2="130" stroke="#854D0E" stroke-width="7" stroke-linecap="round" opacity="0.7"/>
+  <line x1="68" y1="162" x2="140" y2="162" stroke="#854D0E" stroke-width="7" stroke-linecap="round" opacity="0.7"/>
+
+  <!-- Checkmark icon on bottom right -->
+  <path d="M 148 184 L 164 198 L 196 162" fill="none" stroke="#16A34A" stroke-width="8" stroke-linecap="round" stroke-linejoin="round"/>
+
+  <!-- Pushpin / Pin on Top Center -->
+  <g filter="url(#shadow)">
+    <!-- Pin shadow/needle -->
+    <polygon points="126,44 130,44 129,62 127,62" fill="#475569"/>
+    <!-- Pin head -->
+    <circle cx="128" cy="38" r="16" fill="url(#pinGrad)" stroke="#991B1B" stroke-width="2"/>
+    <ellipse cx="123" cy="33" rx="5" ry="3" fill="#FFFFFF" opacity="0.65"/>
+  </g>
+</svg>
