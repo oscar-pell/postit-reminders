@@ -94,6 +94,16 @@ echo -e "${C_CYAN}[5/6]${C_RESET} Registrazione icone del tema e lanciatore desk
 
 # Icona SVG di riferimento
 install -m 644 "$PROJECT_DIR/assets/icon.svg" "$DATA_DIR/icon.svg"
+if [ -f "$PROJECT_DIR/assets/icon.png" ]; then
+    install -m 644 "$PROJECT_DIR/assets/icon.png" "$DATA_DIR/icon.png"
+fi
+
+# Copia icone per il fallback pixmaps
+mkdir -p "$HOME/.local/share/pixmaps"
+install -m 644 "$PROJECT_DIR/assets/icon.svg" "$HOME/.local/share/pixmaps/postit-manager.svg"
+if [ -f "$PROJECT_DIR/assets/icon.png" ]; then
+    install -m 644 "$PROJECT_DIR/assets/icon.png" "$HOME/.local/share/pixmaps/postit-manager.png"
+fi
 
 # Generazione icone se Pillow è installato, altrimenti copia icone precompilate
 if [ -d "$PROJECT_DIR/assets/icons" ] && [ "$(ls -A "$PROJECT_DIR/assets/icons" 2>/dev/null)" ]; then
@@ -107,7 +117,7 @@ elif command -v python3 &>/dev/null; then
     python3 "$PROJECT_DIR/assets/generate_icons.py" 2>/dev/null || true
 fi
 
-# Copia SVG scalabile
+# Copia SVG scalabile nel tema hicolor
 mkdir -p "$ICONS_BASE/scalable/apps"
 install -m 644 "$PROJECT_DIR/assets/icon.svg" "$ICONS_BASE/scalable/apps/postit-manager.svg"
 
