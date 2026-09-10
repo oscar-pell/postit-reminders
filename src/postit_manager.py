@@ -21,8 +21,16 @@ import time
 import uuid
 import webbrowser
 from pathlib import Path
-import tkinter as tk
-from tkinter import ttk, messagebox, font
+try:
+    import tkinter as tk
+    from tkinter import ttk, messagebox, font
+    TKINTER_AVAILABLE = True
+except ImportError:
+    tk = None
+    ttk = None
+    messagebox = None
+    font = None
+    TKINTER_AVAILABLE = False
 
 # Percorsi di sistema dinamici basati su standard XDG
 USER_HOME = Path.home()
@@ -235,6 +243,8 @@ TRANSLATIONS = {
         "cron_sync_success": "Crontab sincronizzato con successo ({count} job attivi).",
         "cron_sync_error": "Errore nell'aggiornamento crontab: {error}",
         "cron_generic_error": "Errore generico crontab: {error}",
+        "cron_not_installed": "Crontab non presente nel sistema (i promemoria sono gestiti dal demone di background).",
+        "cron_not_installed_badge": "⚠️ Cron: NON INSTALLATO",
 
         "status_preset_loaded": "✓ Preset '{title}' caricato nel modulo.",
         "status_preset_stored": "⭐ Preset '{title}' memorizzato con successo!",
@@ -349,6 +359,8 @@ TRANSLATIONS = {
         "cron_sync_success": "Crontab synchronized successfully ({count} active jobs).",
         "cron_sync_error": "Error updating crontab: {error}",
         "cron_generic_error": "Generic crontab error: {error}",
+        "cron_not_installed": "Crontab is not installed on this system (reminders are managed by background daemon).",
+        "cron_not_installed_badge": "⚠️ Cron: NOT INSTALLED",
 
         "status_preset_loaded": "✓ Preset '{title}' loaded into form.",
         "status_preset_stored": "⭐ Preset '{title}' saved successfully!",
@@ -550,7 +562,9 @@ def apply_app_icon(window):
 
 
 def send_system_notification(title: str, message: str, urgency: str = "critical", app_name: str = None):
-    """Invia una notifica di sistema desktop cross-desktop tramite libnotify / notify-send."""
+    """Invia una notifica di sistema desktop cross-desktop tramite libnotify / notify-send se disponibile."""
+    if not shutil.which("notify-send"):
+        return
     icon_name = "postit-manager"
     clean_msg = re.sub(r"(\*\*|\*|__|\=\=|###\s*)", "", message)
     if not app_name:
@@ -656,10 +670,17 @@ class ReminderStore:
 
 
 class CronManager:
-    """Gestione sincronizzazione atomica con Crontab."""
+    """Gestione sincronizzazione atomica con Crontab con tolleranza ai sistemi senza cron (es. Fedora default)."""
+
+    @staticmethod
+    def is_crontab_available() -> bool:
+        """Verifica se il comando crontab è presente nel sistema."""
+        return shutil.which("crontab") is not None
 
     @staticmethod
     def is_cron_service_active() -> bool:
+        if not CronManager.is_crontab_available():
+            return False
         for srv in ["cron", "crond"]:
             try:
                 res = subprocess.run(["systemctl", "is-active", srv], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
@@ -679,9 +700,14 @@ class CronManager:
 
     @staticmethod
     def get_current_crontab() -> str:
-        res = subprocess.run(["crontab", "-l"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-        if res.returncode == 0:
-            return res.stdout
+        if not CronManager.is_crontab_available():
+            return ""
+        try:
+            res = subprocess.run(["crontab", "-l"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            if res.returncode == 0:
+                return res.stdout
+        except Exception:
+            pass
         return ""
 
     @staticmethod
@@ -689,49 +715,52 @@ class CronManager:
         if not lang:
             lang = ConfigStore.get_language()
 
-        current_crontab = CronManager.get_current_crontab()
-        lines = current_crontab.splitlines()
-
-        filtered_lines = []
-        in_managed_block = False
-        for line in lines:
-            if line.strip() == CRON_BLOCK_START:
-                in_managed_block = True
-                continue
-            if line.strip() == CRON_BLOCK_END:
-                in_managed_block = False
-                continue
-            if in_managed_block or CRON_MARKER in line:
-                continue
-            filtered_lines.append(line)
-
-        runner_path = str(RUNNER_SH.resolve()) if RUNNER_SH.exists() else str(Path(__file__).resolve())
-        new_cron_jobs = []
-        active_reminders = [r for r in reminders if r.get("enabled", True)]
-
-        for rem in active_reminders:
-            time_str = rem.get("time", "18:00").strip()
-            match = re.match(r"^([01]?\d|2[0-3]):([0-5]\d)$", time_str)
-            if not match:
-                continue
-            hour, minute = int(match.group(1)), int(match.group(2))
-
-            freq = rem.get("frequency", "Lun-Ven (Giorni feriali)")
-            dow = "1-5" if any(k in freq for k in ["Lun-Ven", "Mon-Fri", "feriali", "Weekdays"]) else "*"
-
-            cmd = f"{runner_path} --popup --alarm --id {rem['id']}"
-            job_line = f"{minute} {hour} * * {dow} {cmd} {CRON_MARKER}"
-            new_cron_jobs.append(job_line)
-
-        all_lines = [l for l in filtered_lines if l.strip()]
-        if new_cron_jobs:
-            all_lines.append(CRON_BLOCK_START)
-            all_lines.extend(new_cron_jobs)
-            all_lines.append(CRON_BLOCK_END)
-
-        new_crontab_content = "\n".join(all_lines) + ("\n" if all_lines else "")
+        if not CronManager.is_crontab_available():
+            return False, t("cron_not_installed", lang)
 
         try:
+            current_crontab = CronManager.get_current_crontab()
+            lines = current_crontab.splitlines()
+
+            filtered_lines = []
+            in_managed_block = False
+            for line in lines:
+                if line.strip() == CRON_BLOCK_START:
+                    in_managed_block = True
+                    continue
+                if line.strip() == CRON_BLOCK_END:
+                    in_managed_block = False
+                    continue
+                if in_managed_block or CRON_MARKER in line:
+                    continue
+                filtered_lines.append(line)
+
+            runner_path = str(RUNNER_SH.resolve()) if RUNNER_SH.exists() else str(Path(__file__).resolve())
+            new_cron_jobs = []
+            active_reminders = [r for r in reminders if r.get("enabled", True)]
+
+            for rem in active_reminders:
+                time_str = rem.get("time", "18:00").strip()
+                match = re.match(r"^([01]?\d|2[0-3]):([0-5]\d)$", time_str)
+                if not match:
+                    continue
+                hour, minute = int(match.group(1)), int(match.group(2))
+
+                freq = rem.get("frequency", "Lun-Ven (Giorni feriali)")
+                dow = "1-5" if any(k in freq for k in ["Lun-Ven", "Mon-Fri", "feriali", "Weekdays"]) else "*"
+
+                cmd = f"{runner_path} --popup --alarm --id {rem['id']}"
+                job_line = f"{minute} {hour} * * {dow} {cmd} {CRON_MARKER}"
+                new_cron_jobs.append(job_line)
+
+            all_lines = [l for l in filtered_lines if l.strip()]
+            if new_cron_jobs:
+                all_lines.append(CRON_BLOCK_START)
+                all_lines.extend(new_cron_jobs)
+                all_lines.append(CRON_BLOCK_END)
+
+            new_crontab_content = "\n".join(all_lines) + ("\n" if all_lines else "")
+
             if not new_crontab_content.strip():
                 subprocess.run(["crontab", "-r"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             else:
@@ -744,6 +773,8 @@ class CronManager:
                     check=True
                 )
             return True, t("cron_sync_success", lang, count=len(new_cron_jobs))
+        except FileNotFoundError:
+            return False, t("cron_not_installed", lang)
         except subprocess.CalledProcessError as e:
             err = e.stderr.strip() or str(e)
             return False, t("cron_sync_error", lang, error=err)
@@ -1683,6 +1714,7 @@ class PostitManagerApp:
 
     def check_system_status(self):
         daemon_ok = CronManager.is_daemon_service_active()
+        cron_avail = CronManager.is_crontab_available()
         cron_ok = CronManager.is_cron_service_active()
 
         if daemon_ok:
@@ -1690,7 +1722,9 @@ class PostitManagerApp:
         else:
             self.badge_daemon.config(text=t("daemon_inactive", self.lang), bg="#FEF3C7", fg="#B45309")
 
-        if cron_ok:
+        if not cron_avail:
+            self.badge_cron.config(text=t("cron_not_installed_badge", self.lang), bg="#F1F5F9", fg="#64748B")
+        elif cron_ok:
             self.badge_cron.config(text=t("cron_active", self.lang), bg="#DCFCE7", fg="#15803D")
         else:
             self.badge_cron.config(text=t("cron_inactive", self.lang), bg="#FEE2E2", fg="#B91C1C")
@@ -1929,9 +1963,14 @@ class PostitManagerApp:
 
         if ReminderStore.add_or_update(reminder_data):
             reminders = ReminderStore.load_all()
-            CronManager.sync_reminders(reminders, lang=self.lang)
+            try:
+                CronManager.sync_reminders(reminders, lang=self.lang)
+            except Exception as e:
+                print(f"[Warning] Sincronizzazione crontab non riuscita (il demone monitor resta attivo): {e}")
+
             self.refresh_reminders_table()
             self.clear_form()
+            self.check_system_status()
             self.lbl_status.config(text=t("status_reminder_saved", self.lang, title=title))
             messagebox.showinfo(
                 t("msg_save_success_title", self.lang),
@@ -1955,9 +1994,14 @@ class PostitManagerApp:
 
         if ReminderStore.delete_by_id(item_id):
             reminders = ReminderStore.load_all()
-            CronManager.sync_reminders(reminders, lang=self.lang)
+            try:
+                CronManager.sync_reminders(reminders, lang=self.lang)
+            except Exception as e:
+                print(f"[Warning] Sincronizzazione crontab non riuscita: {e}")
+
             self.refresh_reminders_table()
             self.clear_form()
+            self.check_system_status()
             self.lbl_status.config(text=t("status_reminder_deleted", self.lang))
         else:
             messagebox.showerror(t("msg_error_title", self.lang), t("msg_delete_error", self.lang))
@@ -2005,13 +2049,17 @@ class PostitManagerApp:
 
     def manual_sync(self):
         reminders = ReminderStore.load_all()
-        ok, msg = CronManager.sync_reminders(reminders, lang=self.lang)
+        try:
+            ok, msg = CronManager.sync_reminders(reminders, lang=self.lang)
+        except Exception as e:
+            ok, msg = False, str(e)
+
         self.check_system_status()
         self.lbl_status.config(text=msg)
         if ok:
             messagebox.showinfo(t("msg_sync_title", self.lang), msg)
         else:
-            messagebox.showerror(t("msg_error_title", self.lang), msg)
+            messagebox.showwarning(t("msg_sync_title", self.lang), msg)
 
     def refresh_reminders_table(self):
         for row in self.tree.get_children():
@@ -2034,6 +2082,8 @@ class PostitManagerApp:
             links_str = t("links_count", self.lang, count=len(valid_links)) if valid_links else t("no_links", self.lang)
 
             self.tree.insert("", tk.END, iid=rem_id, values=(time_val, freq_val, color_val, title_val, links_str))
+
+        self.root.update_idletasks()
 
 
 def run_daemon():
@@ -2109,6 +2159,35 @@ def main():
         ok, msg = CronManager.sync_reminders(ReminderStore.load_all())
         print(msg)
         sys.exit(0 if ok else 1)
+
+    if not TKINTER_AVAILABLE:
+        lang = ConfigStore.get_language()
+        err_msg = (
+            "⚠️  Errore: Il modulo grafico 'tkinter' per Python non è installato nel sistema.\n\n"
+            "Post-it Reminders richiede Tkinter per l'interfaccia grafica.\n"
+            "Per installarlo esegui il comando corrispondente alla tua distribuzione:\n"
+            "  • Fedora / RHEL / CentOS:       sudo dnf install -y python3-tkinter\n"
+            "  • Ubuntu / Debian / Linux Mint: sudo apt install -y python3-tk\n"
+            "  • Arch Linux / Manjaro:          sudo pacman -S --needed tk\n"
+            "  • openSUSE:                      sudo zypper install -y python3-tk\n"
+            "  • Ambiente Conda/Mamba:          conda install -c conda-forge tk\n\n"
+            "Nota: Se non hai privilegi sudo, chiedi all'amministratore di sistema di installare\n"
+            "'python3-tkinter' o usa un ambiente Python utente (es. Conda) con Tkinter abilitato."
+        ) if lang == "it" else (
+            "⚠️  Error: The 'tkinter' GUI package for Python is not installed on this system.\n\n"
+            "Post-it Reminders requires Tkinter for its user interface.\n"
+            "To install it, run the command for your Linux distribution:\n"
+            "  • Fedora / RHEL / CentOS:       sudo dnf install -y python3-tkinter\n"
+            "  • Ubuntu / Debian / Linux Mint: sudo apt install -y python3-tk\n"
+            "  • Arch Linux / Manjaro:          sudo pacman -S --needed tk\n"
+            "  • openSUSE:                      sudo zypper install -y python3-tk\n"
+            "  • Conda/Mamba environment:       conda install -c conda-forge tk\n\n"
+            "Note: If you do not have sudo privileges, ask your system administrator to install\n"
+            "'python3-tkinter' or use a user-level Python environment (e.g. Conda) with Tkinter."
+        )
+        print(f"\n{err_msg}\n", file=sys.stderr)
+        send_system_notification("Post-it Reminders", "Modulo 'tkinter' mancante. Installa python3-tkinter.")
+        sys.exit(1)
 
     if args.popup or args.desktop:
         rem = None

@@ -41,34 +41,96 @@ echo -e "${C_CYAN}[1/6]${C_RESET} Rilevata distribuzione Linux: ${C_BOLD}$DISTRO
 # 2. Controllo e Installazione Dipendenze di Sistema
 echo -e "${C_CYAN}[2/6]${C_RESET} Verifica dipendenze (Python 3, Tkinter, libnotify)..."
 
+check_python() {
+    command -v python3 &>/dev/null
+}
+
 check_tkinter() {
     python3 -c "import tkinter" &>/dev/null
 }
 
-install_dependencies() {
-    echo -e "${C_YELLOW}Installazione dipendenze richieste... (potrebbe essere richiesta la password di sudo)${C_RESET}"
-    if command -v apt-get &>/dev/null; then
-        sudo apt-get update -y && sudo apt-get install -y python3-tk libnotify-bin cron
-    elif command -v dnf &>/dev/null; then
-        sudo dnf install -y python3-tkinter libnotify cronie
-    elif command -v pacman &>/dev/null; then
-        sudo pacman -S --needed --noconfirm tk libnotify cronie
-    elif command -v zypper &>/dev/null; then
-        sudo zypper install -y python3-tk libnotify-tools cron
+try_install_package() {
+    local cmd="$1"
+    set +e
+    if [ "$EUID" -eq 0 ]; then
+        eval "$cmd"
     else
-        echo -e "${C_RED}[Avviso] Gestore pacchetti non riconosciuto. Assicurati di aver installato python3-tk e libnotify manualmente.${C_RESET}"
+        eval "sudo $cmd"
     fi
+    local res=$?
+    set -e
+    return $res
 }
 
-if ! check_tkinter; then
-    echo -e "${C_YELLOW}Tkinter non trovato per Python 3.${C_RESET}"
-    if [ "$EUID" -eq 0 ]; then
-        install_dependencies
-    elif sudo -n true 2>/dev/null || [ -t 0 ]; then
-        install_dependencies
-    else
-        echo -e "${C_RED}[Errore] Tkinter mancante. Installa 'python3-tk' (Ubuntu/Debian) o 'python3-tkinter' (Fedora) prima di proseguire.${C_RESET}"
+# Controllo Python 3
+if ! check_python; then
+    echo -e "${C_RED}Python 3 non trovato.${C_RESET}"
+    if command -v sudo &>/dev/null || [ "$EUID" -eq 0 ]; then
+        echo -e "${C_YELLOW}Tentativo di installazione di Python 3...${C_RESET}"
+        if command -v dnf &>/dev/null; then
+            try_install_package "dnf install -y python3" || true
+        elif command -v apt-get &>/dev/null; then
+            try_install_package "apt-get update -y && apt-get install -y python3" || true
+        elif command -v pacman &>/dev/null; then
+            try_install_package "pacman -S --needed --noconfirm python" || true
+        elif command -v zypper &>/dev/null; then
+            try_install_package "zypper install -y python3" || true
+        fi
+    fi
+    if ! check_python; then
+        echo -e "${C_RED}[Errore critico] Python 3 è indispensabile per l'applicazione. Installalo prima di procedere.${C_RESET}"
         exit 1
+    fi
+fi
+
+# Controllo Tkinter
+if ! check_tkinter; then
+    echo -e "${C_YELLOW}Modulo Tkinter non trovato per Python 3.${C_RESET}"
+    
+    SUDO_AVAILABLE=false
+    if [ "$EUID" -eq 0 ]; then
+        SUDO_AVAILABLE=true
+    elif command -v sudo &>/dev/null; then
+        SUDO_AVAILABLE=true
+    fi
+
+    if [ "$SUDO_AVAILABLE" = true ]; then
+        echo -e "${C_YELLOW}Tentativo di installazione dipendenze di sistema (potrebbe richiedere password di sudo)...${C_RESET}"
+        if command -v dnf &>/dev/null; then
+            try_install_package "dnf install -y python3-tkinter libnotify" || true
+        elif command -v apt-get &>/dev/null; then
+            try_install_package "apt-get update -y && apt-get install -y python3-tk libnotify-bin" || true
+        elif command -v pacman &>/dev/null; then
+            try_install_package "pacman -S --needed --noconfirm tk libnotify" || true
+        elif command -v zypper &>/dev/null; then
+            try_install_package "zypper install -y python3-tk libnotify-tools" || true
+        fi
+    fi
+
+    if check_tkinter; then
+        echo -e "${C_GREEN}✓ Tkinter installato con successo.${C_RESET}"
+    else
+        echo ""
+        echo -e "${C_BOLD}${C_YELLOW}┌────────────────────────────────────────────────────────────────────────┐${C_RESET}"
+        echo -e "${C_BOLD}${C_YELLOW}│ ⚠️  AVVISO: Permessi sudo non disponibili o installazione saltata      │${C_RESET}"
+        echo -e "${C_BOLD}${C_YELLOW}└────────────────────────────────────────────────────────────────────────┘${C_RESET}"
+        echo -e "L'applicazione verrà comunque installata regolarmente nella tua cartella utente (~/.local/bin)."
+        echo -e "Per avviare l'interfaccia grafica su questa macchina, chiedi all'amministratore di sistema"
+        echo -e "oppure esegui con un account dotato di privilegi sudo:"
+        if command -v dnf &>/dev/null; then
+            echo -e "  ${C_BOLD}${C_CYAN}sudo dnf install -y python3-tkinter libnotify${C_RESET}"
+        elif command -v apt-get &>/dev/null; then
+            echo -e "  ${C_BOLD}${C_CYAN}sudo apt install -y python3-tk libnotify-bin${C_RESET}"
+        elif command -v pacman &>/dev/null; then
+            echo -e "  ${C_BOLD}${C_CYAN}sudo pacman -S --needed tk libnotify${C_RESET}"
+        elif command -v zypper &>/dev/null; then
+            echo -e "  ${C_BOLD}${C_CYAN}sudo zypper install -y python3-tk libnotify-tools${C_RESET}"
+        else
+            echo -e "  ${C_BOLD}${C_CYAN}Installa 'python3-tkinter' per la tua distribuzione${C_RESET}"
+        fi
+        echo -e "Se utilizzi Conda/Mamba nel tuo account utente, puoi anche eseguire:"
+        echo -e "  ${C_BOLD}${C_CYAN}conda install -c conda-forge tk${C_RESET}"
+        echo ""
     fi
 else
     echo -e "${C_GREEN}✓ Python 3 e Tkinter sono già disponibili.${C_RESET}"
@@ -148,8 +210,13 @@ if command -v systemctl &>/dev/null && systemctl --user is-system-running &>/dev
     echo -e "${C_GREEN}✓ Demone utente postit-daemon attivato con systemd.${C_RESET}"
 fi
 
-# Sincronizzazione automatica crontab come backup
-"$BIN_DIR/postit-runner.sh" --sync-cron >/dev/null 2>&1 || true
+# Sincronizzazione automatica crontab (se disponibile) come backup
+if command -v crontab &>/dev/null; then
+    "$BIN_DIR/postit-runner.sh" --sync-cron >/dev/null 2>&1 || true
+    echo -e "${C_GREEN}✓ Crontab configurato come schedulatore secondario di backup.${C_RESET}"
+else
+    echo -e "${C_GREEN}✓ Schedulatore: attivo demone utente systemd (crontab non presente, non necessario).${C_RESET}"
+fi
 
 echo ""
 echo -e "${C_BOLD}${C_GREEN}====================================================${C_RESET}"

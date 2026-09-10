@@ -183,6 +183,17 @@ sudo pacman -S --needed python tk libnotify cronie
 sudo zypper install -y python3 python3-tk libnotify-tools cron
 ```
 
+#### 💡 Installazione senza Permessi di Root / Sudo (PC Aziendali o Universitari)
+Tutti i componenti di Post-it Reminders (`postit_manager.py`, gli script runner, le icone del desktop, il lanciatore dell'ambiente grafico e il demone in background `systemd --user`) risiedono interamente nella cartella dell'utente (`~/.local/bin`, `~/.local/share`, `~/.config/systemd/user`) e **non richiedono alcun permesso di amministratore (root/sudo)**.
+
+Se il tuo sistema non include il pacchetto `python3-tkinter`, richiedi al tuo amministratore di sistema di installarlo (`sudo dnf install -y python3-tkinter` su Fedora, oppure `sudo apt install -y python3-tk` su Ubuntu/Debian). In alternativa, se usi un ambiente Python locale con Conda o Mamba, puoi abilitarlo direttamente senza root con:
+```bash
+conda install -c conda-forge tk
+```
+
+> [!NOTE]
+> Su Fedora Workstation, `cronie` (`crontab`) non è installato di default ed è del tutto facoltativo: Post-it Reminders gestisce la temporizzazione tramite il demone moderno nativo `systemd --user` (`postit-daemon.service`) senza alcun bisogno del servizio Cron.
+
 ---
 
 ## 📖 Guida all'Uso e Configurazione

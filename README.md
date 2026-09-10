@@ -183,6 +183,17 @@ sudo pacman -S --needed python tk libnotify cronie
 sudo zypper install -y python3 python3-tk libnotify-tools cron
 ```
 
+#### 💡 Installing without Root/Sudo Privileges (Enterprise / University PCs)
+All components of Post-it Reminders (`postit_manager.py`, runner scripts, desktop icons, launcher entry, and the `systemd --user` background daemon) are installed entirely in your user space (`~/.local/bin`, `~/.local/share`, `~/.config/systemd/user`) and require **no sudo/root permissions whatsoever**.
+
+If your system lacks Python's graphical Tkinter package (`python3-tkinter`), ask your administrator to install it, or if you use Conda/Mamba in user space, simply run:
+```bash
+conda install -c conda-forge tk
+```
+
+> [!NOTE]
+> On Fedora Workstation, `cronie` (`crontab`) is not installed by default and is completely optional: Post-it Reminders uses a native `systemd --user` daemon (`postit-daemon.service`) for flawless background reminders without needing Cron.
+
 ---
 
 ## 📖 Configuration & User Guide
