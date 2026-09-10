@@ -25,8 +25,8 @@ import uuid
 import webbrowser
 from pathlib import Path
 
-# Versione applicazione e coordinate repository GitHub
-APP_VERSION = "1.1.3"
+# Versione applicazione
+APP_VERSION = "1.1.4"
 GITHUB_REPO = "oscar-pell/postit-reminders"
 GITHUB_RELEASES_URL = f"https://github.com/{GITHUB_REPO}/releases"
 GITHUB_API_LATEST = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
@@ -274,6 +274,9 @@ TRANSLATIONS = {
         "msg_update_in_progress": "Download e installazione dell'aggiornamento in corso...",
         "msg_update_success_title": "Aggiornamento Completato",
         "msg_update_success_body": "L'applicazione è stata aggiornata con successo alla versione {version}!\n\nRiavvia l'applicazione per utilizzare le nuove funzionalità.",
+        "msg_update_relaunch_confirm_title": "Aggiornamento Completato",
+        "msg_update_relaunch_confirm_body": "L'applicazione è stata aggiornata con successo alla versione {version}!\n\nVuoi riavviare l'applicazione adesso per applicare subito tutte le novità?",
+        "status_updated_manual_restart": "✓ Aggiornato a {version}. Riavvia l'applicazione per applicare le novità.",
         "msg_update_error_title": "Errore Aggiornamento",
         "msg_update_error_body": "Impossibile completare l'aggiornamento automatico: {error}\n\nPuoi scaricare l'aggiornamento manualmente da GitHub.",
         "sync_all_success": "✓ Demone Systemd e Crontab sincronizzati con successo!",
@@ -414,6 +417,9 @@ TRANSLATIONS = {
         "msg_update_in_progress": "Downloading and installing update...",
         "msg_update_success_title": "Update Complete",
         "msg_update_success_body": "Successfully updated to {version}!\n\nPlease restart the application to use the new features.",
+        "msg_update_relaunch_confirm_title": "Update Complete",
+        "msg_update_relaunch_confirm_body": "Successfully updated to {version}!\n\nDo you want to restart the application now to apply all changes immediately?",
+        "status_updated_manual_restart": "✓ Updated to {version}. Please restart the application to apply changes.",
         "msg_update_error_title": "Update Error",
         "msg_update_error_body": "Unable to complete automatic update: {error}\n\nYou can update manually from GitHub.",
         "sync_all_success": "✓ Systemd Daemon and Crontab successfully synchronized!",
@@ -2371,23 +2377,26 @@ class PostitManagerApp:
         tag = release_info.get("tag_name", "v1.x.x")
         dlg = tk.Toplevel(self.root)
         dlg.title(t("msg_update_window_title", self.lang))
-        dlg.geometry("560x480")
-        dlg.minsize(500, 420)
+        dlg.geometry("640x520")
+        dlg.minsize(580, 460)
         dlg.transient(self.root)
         dlg.grab_set()
         dlg.configure(bg="#FFFFFF")
         apply_app_icon(dlg)
 
         try:
-            dlg.geometry("+%d+%d" % (
-                self.root.winfo_rootx() + (self.root.winfo_width() - 560) // 2,
-                self.root.winfo_rooty() + (self.root.winfo_height() - 480) // 2
-            ))
+            dlg_w, dlg_h = 640, 520
+            root_w = max(self.root.winfo_width(), 640)
+            root_h = max(self.root.winfo_height(), 520)
+            x = self.root.winfo_rootx() + (root_w - dlg_w) // 2
+            y = self.root.winfo_rooty() + (root_h - dlg_h) // 2
+            dlg.geometry(f"{dlg_w}x{dlg_h}+{max(0, x)}+{max(0, y)}")
         except Exception:
-            pass
+            dlg.geometry("640x520")
 
+        # 1. Header fisso in alto
         hdr = tk.Frame(dlg, bg="#EFF6FF", padx=20, pady=16)
-        hdr.pack(fill=tk.X)
+        hdr.pack(side=tk.TOP, fill=tk.X)
 
         lbl_h = tk.Label(hdr, text=f"🎉 {t('msg_update_header', self.lang)}", font=(self.sys_font, 13, "bold"), bg="#EFF6FF", fg="#1D4ED8")
         lbl_h.pack(anchor="w")
@@ -2396,23 +2405,46 @@ class PostitManagerApp:
         lbl_v = tk.Label(hdr, text=info_text, font=(self.sys_font, 10, "bold"), bg="#EFF6FF", fg="#1E40AF")
         lbl_v.pack(anchor="w", pady=(4, 0))
 
-        body_frame = tk.Frame(dlg, bg="#FFFFFF", padx=20, pady=12)
-        body_frame.pack(fill=tk.BOTH, expand=True)
+        # 2. Barra inferiore fissa (pulsanti di azione e stato)
+        # Nota: Viene impacchettata con side=BOTTOM prima del corpo centrale affinché
+        # sia sempre garantita la sua visibilità e non venga mai schiacciata o nascosta.
+        b_bar = tk.Frame(dlg, bg="#FFFFFF", padx=20, pady=14)
+        b_bar.pack(side=tk.BOTTOM, fill=tk.X)
+
+        lbl_progress = tk.Label(b_bar, text="", font=(self.sys_font, 9, "italic"), bg="#FFFFFF", fg="#0284C7")
+        lbl_progress.pack(anchor="w", pady=(0, 10))
+
+        btn_row = tk.Frame(b_bar, bg="#FFFFFF")
+        btn_row.pack(fill=tk.X)
+
+        # 3. Area centrale espandibile con scrollbar per note di rilascio
+        body_frame = tk.Frame(dlg, bg="#FFFFFF", padx=20, pady=10)
+        body_frame.pack(side=tk.TOP, fill=tk.BOTH, expand=True)
 
         lbl_notes = tk.Label(body_frame, text=t("msg_release_notes", self.lang), font=(self.sys_font, 9, "bold"), bg="#FFFFFF", fg="#475569")
         lbl_notes.pack(anchor="w", pady=(0, 6))
 
-        txt_notes = tk.Text(body_frame, font=(self.sys_font, 9), bg="#F8FAFC", relief=tk.SOLID, bd=1, wrap=tk.WORD)
-        txt_notes.pack(fill=tk.BOTH, expand=True)
+        txt_container = tk.Frame(body_frame, bg="#FFFFFF")
+        txt_container.pack(fill=tk.BOTH, expand=True)
+
+        scroll_notes = ttk.Scrollbar(txt_container)
+        scroll_notes.pack(side=tk.RIGHT, fill=tk.Y)
+
+        txt_notes = tk.Text(
+            txt_container,
+            font=(self.sys_font, 9),
+            bg="#F8FAFC",
+            relief=tk.SOLID,
+            bd=1,
+            wrap=tk.WORD,
+            yscrollcommand=scroll_notes.set
+        )
+        txt_notes.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        scroll_notes.config(command=txt_notes.yview)
+
         raw_body = release_info.get("body", "").strip() or "Nuovo rilascio disponibile con ottimizzazioni e miglioramenti."
         txt_notes.insert("1.0", raw_body)
         txt_notes.config(state=tk.DISABLED)
-
-        lbl_progress = tk.Label(body_frame, text="", font=(self.sys_font, 9, "italic"), bg="#FFFFFF", fg="#0284C7")
-        lbl_progress.pack(anchor="w", pady=(6, 0))
-
-        b_bar = tk.Frame(dlg, bg="#FFFFFF", padx=20, pady=14)
-        b_bar.pack(fill=tk.X, side=tk.BOTTOM)
 
         def do_update():
             lbl_progress.config(text=t("msg_update_in_progress", self.lang))
@@ -2423,12 +2455,28 @@ class PostitManagerApp:
                 ok, msg = UpdateManager.perform_automatic_update(release_info)
                 def on_done():
                     if ok:
-                        messagebox.showinfo(
-                            t("msg_update_success_title", self.lang),
-                            t("msg_update_success_body", self.lang, version=tag),
+                        relaunch = messagebox.askyesno(
+                            t("msg_update_relaunch_confirm_title", self.lang),
+                            t("msg_update_relaunch_confirm_body", self.lang, version=tag),
                             parent=dlg
                         )
-                        dlg.destroy()
+                        if relaunch:
+                            runner = [str(RUNNER_SH.resolve())] if RUNNER_SH.exists() else [sys.executable, str(Path(__file__).resolve())]
+                            try:
+                                subprocess.Popen(
+                                    runner,
+                                    start_new_session=True,
+                                    stdout=subprocess.DEVNULL,
+                                    stderr=subprocess.DEVNULL
+                                )
+                            except Exception as ex:
+                                print(f"[Post-it] Riavvio fallito: {ex}")
+                            dlg.destroy()
+                            self.root.destroy()
+                            sys.exit(0)
+                        else:
+                            dlg.destroy()
+                            self.lbl_status.config(text=t("status_updated_manual_restart", self.lang, version=tag))
                     else:
                         lbl_progress.config(text="")
                         btn_upd.config(state=tk.NORMAL)
@@ -2442,7 +2490,7 @@ class PostitManagerApp:
             threading.Thread(target=bg_work, daemon=True).start()
 
         btn_upd = tk.Button(
-            b_bar,
+            btn_row,
             text=t("btn_update_now", self.lang),
             font=(self.sys_font, 10, "bold"),
             bg="#16A34A",
@@ -2450,14 +2498,14 @@ class PostitManagerApp:
             activebackground="#15803D",
             relief=tk.FLAT,
             cursor="hand2",
-            padx=12,
+            padx=14,
             pady=7,
             command=do_update
         )
         btn_upd.pack(side=tk.LEFT, padx=(0, 8))
 
         btn_gh = tk.Button(
-            b_bar,
+            btn_row,
             text=t("btn_view_github", self.lang),
             font=(self.sys_font, 9),
             bg="#F1F5F9",
@@ -2471,14 +2519,14 @@ class PostitManagerApp:
         btn_gh.pack(side=tk.LEFT, padx=(0, 8))
 
         btn_cancel = tk.Button(
-            b_bar,
+            btn_row,
             text=t("btn_close_dialog", self.lang),
             font=(self.sys_font, 9),
             bg="#F1F5F9",
             fg="#64748B",
             relief=tk.FLAT,
             cursor="hand2",
-            padx=10,
+            padx=12,
             pady=7,
             command=dlg.destroy
         )
