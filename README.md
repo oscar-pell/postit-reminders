@@ -248,19 +248,77 @@ postit-manager --daemon
 
 ---
 
-## 🗑️ Disinstallazione Pulita
+## 🗑️ Disinstallazione e Pulizia Completa
 
-Per rimuovere completamente l'applicazione dal sistema:
+Puoi disinstallare e ripulire completamente il sistema usando lo script automatico oppure eseguendo manualmente i comandi.
+
+### Metodo 1: Tramite Script Automatico (Consigliato)
 
 ```bash
 cd postit-reminders
-./uninstall.sh
-```
 
-Per eliminare anche tutti i promemoria e le impostazioni salvate:
-```bash
+# Rimuove l'applicazione, il servizio di background e le icone (mantiene i promemoria salvati):
+./uninstall.sh
+
+# OPPURE: Rimuove e cancella COMPLETAMENTE tutto (inclusi i promemoria e le impostazioni salvate):
 ./uninstall.sh --purge
 ```
+
+---
+
+### Metodo 2: Comandi Manuali Universali (Validi per qualsiasi distribuzione Linux)
+
+Se hai cancellato la cartella del repository o vuoi rimuovere tutto manualmente da terminale:
+
+```bash
+# 1. Arresta e disabilita il servizio utente Systemd
+systemctl --user disable --now postit-daemon.service 2>/dev/null || true
+rm -f ~/.config/systemd/user/postit-daemon.service
+systemctl --user daemon-reload
+
+# 2. Ripulisci le voci generate automaticamente dal Crontab
+crontab -l 2>/dev/null | sed '/POSTIT_APP_JOB/d' | sed '/=== BEGIN POSTIT_APP_JOBS/,/=== END POSTIT_APP_JOBS/d' | crontab - 2>/dev/null || true
+
+# 3. Elimina gli eseguibili e il symlink da ~/.local/bin
+rm -f ~/.local/bin/postit-manager ~/.local/bin/postit-runner.sh ~/.local/bin/postit_manager.py
+
+# 4. Elimina il lanciatore Desktop e le icone di sistema
+rm -f ~/.local/share/applications/postit-manager.desktop
+rm -f ~/.local/share/icons/hicolor/scalable/apps/postit-manager.svg
+rm -f ~/.local/share/icons/hicolor/*/apps/postit-manager.png
+rm -f ~/.local/share/pixmaps/postit-manager.*
+
+# Aggiorna la cache del desktop
+update-desktop-database ~/.local/share/applications 2>/dev/null || true
+gtk-update-icon-cache -f -t ~/.local/share/icons/hicolor 2>/dev/null || true
+
+# 5. (Opzionale) Elimina tutti i dati e le impostazioni salvate
+rm -rf ~/.local/share/postit-app
+rm -rf /run/user/$(id -u)/postit-app
+```
+
+---
+
+### 📦 Rimozione Opzionale delle Dipendenze di Sistema
+
+Se desideri disinstallare anche i pacchetti di sistema installati per questa app:
+
+- **Ubuntu / Debian / Linux Mint / Pop!_OS**:
+  ```bash
+  sudo apt remove -y python3-tk libnotify-bin
+  ```
+- **Fedora / RHEL / Rocky Linux**:
+  ```bash
+  sudo dnf remove -y python3-tkinter libnotify
+  ```
+- **Arch Linux / Manjaro**:
+  ```bash
+  sudo pacman -R tk libnotify
+  ```
+- **openSUSE (Tumbleweed / Leap)**:
+  ```bash
+  sudo zypper remove -y python3-tk libnotify-tools
+  ```
 
 ---
 
