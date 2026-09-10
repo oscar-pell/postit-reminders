@@ -26,7 +26,7 @@ import webbrowser
 from pathlib import Path
 
 # Versione applicazione
-APP_VERSION = "1.1.7"
+APP_VERSION = "1.1.8"
 GITHUB_REPO = "oscar-pell/postit-reminders"
 GITHUB_RELEASES_URL = f"https://github.com/{GITHUB_REPO}/releases"
 GITHUB_API_LATEST = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
@@ -294,9 +294,9 @@ TRANSLATIONS = {
         "btn_close_dialog": "Più tardi",
         "msg_update_in_progress": "Download e installazione dell'aggiornamento in corso...",
         "msg_update_success_title": "Aggiornamento Completato",
-        "msg_update_success_body": "L'applicazione è stata aggiornata con successo alla versione {version}!\n\nRiavvia l'applicazione per utilizzare le nuove funzionalità.",
+        "msg_update_success_body": "Applicazione aggiornata alla versione {version}.\n\nRiavvia per utilizzare le nuove funzionalità.",
         "msg_update_relaunch_confirm_title": "Aggiornamento Completato",
-        "msg_update_relaunch_confirm_body": "L'applicazione è stata aggiornata con successo alla versione {version}!\n\nVuoi riavviare l'applicazione adesso per applicare subito tutte le novità?",
+        "msg_update_relaunch_confirm_body": "Applicazione aggiornata alla versione {version}.\n\nVuoi riavviarla adesso per applicare subito le novità?",
         "status_updated_manual_restart": "✓ Aggiornato a {version}. Riavvia l'applicazione per applicare le novità.",
         "msg_update_error_title": "Errore Aggiornamento",
         "msg_update_error_body": "Impossibile completare l'aggiornamento automatico: {error}\n\nPuoi scaricare l'aggiornamento manualmente da GitHub.",
@@ -465,9 +465,9 @@ TRANSLATIONS = {
         "btn_close_dialog": "Later",
         "msg_update_in_progress": "Downloading and installing update...",
         "msg_update_success_title": "Update Complete",
-        "msg_update_success_body": "Successfully updated to {version}!\n\nPlease restart the application to use the new features.",
+        "msg_update_success_body": "Application updated to version {version}.\n\nPlease restart to use the new features.",
         "msg_update_relaunch_confirm_title": "Update Complete",
-        "msg_update_relaunch_confirm_body": "Successfully updated to {version}!\n\nDo you want to restart the application now to apply all changes immediately?",
+        "msg_update_relaunch_confirm_body": "Application updated to version {version}.\n\nDo you want to restart now to apply changes?",
         "status_updated_manual_restart": "✓ Updated to {version}. Please restart the application to apply changes.",
         "msg_update_error_title": "Update Error",
         "msg_update_error_body": "Unable to complete automatic update: {error}\n\nYou can update manually from GitHub.",
@@ -653,6 +653,46 @@ def get_system_font_family() -> str:
     except Exception:
         pass
     return "Sans"
+
+
+def configure_dialog_fonts(root_widget=None, sys_font: str = None):
+    """
+    Configura una tipografia compatta, elegante e proporzionata per tutti gli alert, popup e messagebox Tkinter.
+    Riduce la dimensione predefinita dei testi di alert (che in Tkinter è 12pt grassetto)
+    ad una dimensione compatta (8pt normale), evitando che i messaggi appaiano sproporzionati o enormi.
+    """
+    if not sys_font:
+        sys_font = get_system_font_family()
+
+    # Riconfigurazione font di sistema Tkinter usati dai dialoghi
+    for name, sz, wt in [
+        ("TkCaptionFont", 8, "normal"),       # Testo principale messaggi in tk_messageBox (era 12 bold!)
+        ("TkDefaultFont", 8, "normal"),       # Testo secondario e widget standard
+        ("TkHeadingFont", 9, "bold"),         # Intestazioni
+        ("TkTooltipFont", 8, "normal"),       # Tooltip
+        ("TkSmallCaptionFont", 8, "normal"),  # Didascalie piccole
+        ("TkIconFont", 8, "normal"),          # Testo icone
+        ("TkMenuFont", 8, "normal"),          # Voci di menu
+    ]:
+        try:
+            f = font.nametofont(name)
+            f.configure(family=sys_font, size=sz, weight=wt)
+        except Exception:
+            pass
+
+    # Impostazione opzioni del database Tcl per tk_messageBox (msgbox.tcl)
+    if root_widget:
+        try:
+            root_widget.option_add("*Dialog.msg.font", f"{sys_font} 8 normal")
+            root_widget.option_add("*Dialog.dtl.font", f"{sys_font} 8 normal")
+            root_widget.option_add("*Dialog.msg.wrapLength", "420")
+            root_widget.option_add("*Dialog.dtl.wrapLength", "420")
+            root_widget.option_add("*Dialog*font", f"{sys_font} 8 normal")
+            root_widget.option_add("*Dialog*Label*font", f"{sys_font} 8 normal")
+            root_widget.option_add("*Dialog*Button*font", f"{sys_font} 8 normal")
+            root_widget.option_add("*Message*font", f"{sys_font} 8 normal")
+        except Exception:
+            pass
 
 
 def apply_app_icon(window):
@@ -1426,6 +1466,7 @@ class PostitWindow:
         color_key = self.reminder.get("color", "yellow")
         self.theme = COLOR_THEMES.get(color_key, COLOR_THEMES["yellow"])
         self.sys_font = get_system_font_family()
+        configure_dialog_fonts(self.root, self.sys_font)
         self.is_pinned = self.is_alarm
 
         self._setup_window()
@@ -1725,6 +1766,7 @@ class PostitManagerApp:
         self.root = root
         self.sys_font = get_system_font_family()
         self.lang = ConfigStore.get_language()
+        configure_dialog_fonts(self.root, self.sys_font)
 
         self.root.title(t("app_window_title", self.lang))
 
@@ -1786,10 +1828,13 @@ class PostitManagerApp:
         self.color_muted = "#64748B"
 
         self.root.configure(bg=self.color_bg)
+        configure_dialog_fonts(self.root, self.sys_font)
 
         style = ttk.Style()
         try:
             style.theme_use("clam")
+            style.configure("TLabel", font=(self.sys_font, 9))
+            style.configure("TButton", font=(self.sys_font, 9))
         except Exception:
             pass
 
@@ -3360,6 +3405,7 @@ def main():
         sys.exit(0)
 
     root = tk.Tk(className="postit-manager")
+    configure_dialog_fonts(root)
     app = PostitManagerApp(root)
     root.mainloop()
 
