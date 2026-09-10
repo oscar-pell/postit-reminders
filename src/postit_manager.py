@@ -17,10 +17,20 @@ import re
 import shutil
 import subprocess
 import sys
+import threading
 import time
+import urllib.error
+import urllib.request
 import uuid
 import webbrowser
 from pathlib import Path
+
+# Versione applicazione e coordinate repository GitHub
+APP_VERSION = "1.1.2"
+GITHUB_REPO = "oscar-pell/postit-reminders"
+GITHUB_RELEASES_URL = f"https://github.com/{GITHUB_REPO}/releases"
+GITHUB_API_LATEST = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
+
 try:
     import tkinter as tk
     from tkinter import ttk, messagebox, font
@@ -244,7 +254,31 @@ TRANSLATIONS = {
         "cron_sync_error": "Errore nell'aggiornamento crontab: {error}",
         "cron_generic_error": "Errore generico crontab: {error}",
         "cron_not_installed": "Crontab non presente nel sistema (i promemoria sono gestiti dal demone di background).",
-        "cron_not_installed_badge": "⚠️ Cron: NON INSTALLATO",
+        "cron_not_installed_badge": "○ Cron: NON RICHIESTO",
+        "cron_optional_badge": "○ Cron: OPZIONALE",
+
+        "btn_check_update": "🔄 Aggiornamenti",
+        "btn_update_available": "🎉 Aggiorna a {version}",
+        "msg_checking_updates": "Verifica disponibilità aggiornamenti...",
+        "msg_no_updates_title": "Nessun Aggiornamento",
+        "msg_no_updates_body": "Post-it Reminders è già aggiornato all'ultima versione disponibile ({version}).",
+        "msg_update_found_title": "Nuova Versione Disponibile",
+        "msg_update_window_title": "Aggiornamento Software",
+        "msg_update_header": "Nuova versione disponibile su GitHub!",
+        "msg_current_version": "Versione installata:",
+        "msg_latest_version": "Nuova versione:",
+        "msg_release_notes": "Note di rilascio:",
+        "btn_update_now": "🚀 Aggiorna Ora",
+        "btn_view_github": "🌐 Apri su GitHub",
+        "btn_close_dialog": "Più tardi",
+        "msg_update_in_progress": "Download e installazione dell'aggiornamento in corso...",
+        "msg_update_success_title": "Aggiornamento Completato",
+        "msg_update_success_body": "L'applicazione è stata aggiornata con successo alla versione {version}!\n\nRiavvia l'applicazione per utilizzare le nuove funzionalità.",
+        "msg_update_error_title": "Errore Aggiornamento",
+        "msg_update_error_body": "Impossibile completare l'aggiornamento automatico: {error}\n\nPuoi scaricare l'aggiornamento manualmente da GitHub.",
+        "sync_all_success": "✓ Demone Systemd e Crontab sincronizzati con successo!",
+        "sync_daemon_success": "✓ Demone Systemd ricaricato con successo (promemoria attivi)!",
+        "sync_manual_done": "✓ Schedulatore sincronizzato.",
 
         "status_preset_loaded": "✓ Preset '{title}' caricato nel modulo.",
         "status_preset_stored": "⭐ Preset '{title}' memorizzato con successo!",
@@ -360,7 +394,31 @@ TRANSLATIONS = {
         "cron_sync_error": "Error updating crontab: {error}",
         "cron_generic_error": "Generic crontab error: {error}",
         "cron_not_installed": "Crontab is not installed on this system (reminders are managed by background daemon).",
-        "cron_not_installed_badge": "⚠️ Cron: NOT INSTALLED",
+        "cron_not_installed_badge": "○ Cron: NOT REQUIRED",
+        "cron_optional_badge": "○ Cron: OPTIONAL",
+
+        "btn_check_update": "🔄 Check Updates",
+        "btn_update_available": "🎉 Update to {version}",
+        "msg_checking_updates": "Checking for updates...",
+        "msg_no_updates_title": "Up to Date",
+        "msg_no_updates_body": "Post-it Reminders is already up to date ({version}).",
+        "msg_update_found_title": "New Version Available",
+        "msg_update_window_title": "Software Update",
+        "msg_update_header": "New version available on GitHub!",
+        "msg_current_version": "Installed version:",
+        "msg_latest_version": "Latest version:",
+        "msg_release_notes": "Release notes:",
+        "btn_update_now": "🚀 Update Now",
+        "btn_view_github": "🌐 View on GitHub",
+        "btn_close_dialog": "Later",
+        "msg_update_in_progress": "Downloading and installing update...",
+        "msg_update_success_title": "Update Complete",
+        "msg_update_success_body": "Successfully updated to {version}!\n\nPlease restart the application to use the new features.",
+        "msg_update_error_title": "Update Error",
+        "msg_update_error_body": "Unable to complete automatic update: {error}\n\nYou can update manually from GitHub.",
+        "sync_all_success": "✓ Systemd Daemon and Crontab successfully synchronized!",
+        "sync_daemon_success": "✓ Systemd Daemon successfully reloaded (active reminders)!",
+        "sync_manual_done": "✓ Scheduler synchronized.",
 
         "status_preset_loaded": "✓ Preset '{title}' loaded into form.",
         "status_preset_stored": "⭐ Preset '{title}' saved successfully!",
@@ -782,6 +840,133 @@ class CronManager:
             return False, t("cron_generic_error", lang, error=str(e))
 
 
+class UpdateManager:
+    """Gestione verifica e installazione aggiornamenti tramite GitHub Releases."""
+
+    @staticmethod
+    def parse_version(ver_str: str) -> tuple:
+        if not ver_str:
+            return (0, 0, 0)
+        clean = re.sub(r"^[^\d]*", "", str(ver_str).strip())
+        parts = []
+        for p in clean.split("."):
+            try:
+                m = re.match(r"^\d+", p)
+                parts.append(int(m.group(0)) if m else 0)
+            except Exception:
+                parts.append(0)
+        return tuple(parts)
+
+    @staticmethod
+    def check_for_updates() -> tuple[bool, dict | None, str]:
+        """
+        Controlla l'ultima release disponibile su GitHub.
+        Ritorna: (has_update: bool, release_info: dict | None, latest_tag: str)
+        """
+        req = urllib.request.Request(
+            GITHUB_API_LATEST,
+            headers={
+                "User-Agent": "PostitReminders-App",
+                "Accept": "application/vnd.github.v3+json"
+            }
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=5) as resp:
+                if resp.status != 200:
+                    return False, None, f"HTTP {resp.status}"
+                data = json.loads(resp.read().decode("utf-8"))
+                latest_tag = data.get("tag_name", "").strip()
+                latest_ver = UpdateManager.parse_version(latest_tag)
+                current_ver = UpdateManager.parse_version(APP_VERSION)
+                has_update = latest_ver > current_ver
+                return has_update, data, latest_tag
+        except Exception as e:
+            return False, None, str(e)
+
+    @staticmethod
+    def perform_automatic_update(release_info: dict) -> tuple[bool, str]:
+        """
+        Scarica e installa l'ultima versione dell'applicazione.
+        Tenta prima l'aggiornamento tramite git pull se presente un repository locale,
+        altrimenti scarica e aggiorna i binari utente direttamente da GitHub.
+        """
+        tag = release_info.get("tag_name", "main")
+
+        # 1. Tentativo con git se esiste un repository locale
+        candidate_git_dirs = [
+            Path(__file__).resolve().parent.parent,
+            USER_HOME / "postit-reminders"
+        ]
+        for g_dir in candidate_git_dirs:
+            if (g_dir / ".git").is_dir() and (g_dir / "install.sh").exists():
+                try:
+                    subprocess.run(
+                        ["git", "pull", "--ff-only", "origin", "main"],
+                        cwd=str(g_dir),
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.PIPE,
+                        text=True,
+                        timeout=15,
+                        check=True
+                    )
+                    subprocess.run(
+                        ["bash", str(g_dir / "install.sh")],
+                        cwd=str(g_dir),
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.PIPE,
+                        text=True,
+                        timeout=30,
+                        check=True
+                    )
+                    return True, f"Aggiornato con successo da repository locale ({tag})."
+                except Exception:
+                    pass
+
+        # 2. Aggiornamento diretto da GitHub Raw
+        try:
+            raw_base = f"https://raw.githubusercontent.com/{GITHUB_REPO}/{tag}"
+            py_url = f"{raw_base}/src/postit_manager.py"
+            sh_url = f"{raw_base}/src/postit-runner.sh"
+
+            req_py = urllib.request.Request(py_url, headers={"User-Agent": "PostitReminders-App"})
+            with urllib.request.urlopen(req_py, timeout=12) as resp:
+                py_code = resp.read().decode("utf-8")
+
+            req_sh = urllib.request.Request(sh_url, headers={"User-Agent": "PostitReminders-App"})
+            with urllib.request.urlopen(req_sh, timeout=12) as resp:
+                sh_code = resp.read().decode("utf-8")
+
+            bin_dir = USER_HOME / ".local" / "bin"
+            bin_dir.mkdir(parents=True, exist_ok=True)
+
+            tmp_py = bin_dir / "postit_manager.py.tmp"
+            tmp_py.write_text(py_code, encoding="utf-8")
+            tmp_py.chmod(0o755)
+
+            # Controllo sintassi Python prima della sostituzione
+            res_test = subprocess.run([sys.executable, "-m", "py_compile", str(tmp_py)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            if res_test.returncode != 0:
+                tmp_py.unlink(missing_ok=True)
+                return False, "File scaricato non valido (errore di compilazione)."
+
+            target_py = bin_dir / "postit_manager.py"
+            tmp_py.replace(target_py)
+
+            target_sh = bin_dir / "postit-runner.sh"
+            target_sh.write_text(sh_code, encoding="utf-8")
+            target_sh.chmod(0o755)
+
+            if CronManager.is_daemon_service_active():
+                try:
+                    subprocess.run(["systemctl", "--user", "restart", "postit-daemon"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                except Exception:
+                    pass
+
+            return True, f"Aggiornato con successo alla versione {tag} in {bin_dir}."
+        except Exception as e:
+            return False, f"Errore durante l'aggiornamento: {e}"
+
+
 def render_formatted_text(text_widget: tk.Text, raw_text: str, theme: dict):
     """Renderizza testo formattato in stile Markdown all'interno del Text widget."""
     sys_font = get_system_font_family()
@@ -1166,19 +1351,32 @@ class PostitManagerApp:
         self.lang = ConfigStore.get_language()
 
         self.root.title(t("app_window_title", self.lang))
-        self.root.geometry("980x730")
-        self.root.minsize(920, 660)
+
+        screen_w = self.root.winfo_screenwidth()
+        screen_h = self.root.winfo_screenheight()
+        win_w = min(1160, max(1060, screen_w - 60))
+        win_h = min(800, max(720, screen_h - 100))
+        pos_x = max(0, (screen_w - win_w) // 2)
+        pos_y = max(0, (screen_h - win_h) // 2)
+
+        self.root.geometry(f"{win_w}x{win_h}+{pos_x}+{pos_y}")
+        self.root.minsize(1040, 700)
 
         apply_app_icon(self.root)
 
         self.editing_id = None
         self.selected_color = "yellow"
+        self.latest_release_info = None
+        self.latest_release_tag = ""
 
         self._init_styles()
         self._build_ui()
         self.refresh_reminders_table()
         self.update_preset_button()
         self.check_system_status()
+
+        # Controllo automatico aggiornamenti GitHub in background
+        self.root.after(1500, lambda: self.check_updates(manual=False))
 
     def _init_styles(self):
         self.color_bg = "#F8FAFC"
@@ -1253,7 +1451,7 @@ class PostitManagerApp:
             font=(self.sys_font, 9, "bold"),
             bg="#F1F5F9",
             fg="#475569",
-            padx=10,
+            padx=9,
             pady=4
         )
         self.badge_daemon.pack(side=tk.LEFT, padx=(0, 6))
@@ -1264,10 +1462,27 @@ class PostitManagerApp:
             font=(self.sys_font, 9, "bold"),
             bg="#F1F5F9",
             fg="#475569",
-            padx=10,
+            padx=9,
             pady=4
         )
-        self.badge_cron.pack(side=tk.LEFT, padx=(0, 12))
+        self.badge_cron.pack(side=tk.LEFT, padx=(0, 10))
+
+        # Pulsante Verifica Aggiornamenti / Notifica Release
+        self.btn_check_update = tk.Button(
+            hdr_right,
+            text=t("btn_check_update", self.lang),
+            font=(self.sys_font, 9, "bold"),
+            bg="#EFF6FF",
+            fg="#1D4ED8",
+            activebackground="#DBEAFE",
+            activeforeground="#1E40AF",
+            relief=tk.FLAT,
+            cursor="hand2",
+            padx=9,
+            pady=4,
+            command=lambda: self.check_updates(manual=True)
+        )
+        self.btn_check_update.pack(side=tk.LEFT, padx=(0, 12))
 
         # Selettore di Lingua (Italiano / Inglese)
         lang_frame = tk.Frame(hdr_right, bg="#FFFFFF")
@@ -1290,11 +1505,11 @@ class PostitManagerApp:
         main_content = tk.Frame(self.root, bg=self.color_bg, padx=18, pady=14)
         main_content.pack(fill=tk.BOTH, expand=True)
 
-        left_col = tk.Frame(main_content, bg=self.color_bg, width=470)
-        left_col.pack(side=tk.LEFT, fill=tk.BOTH, padx=(0, 10))
+        left_col = tk.Frame(main_content, bg=self.color_bg, width=480)
+        left_col.pack(side=tk.LEFT, fill=tk.BOTH, padx=(0, 12))
 
         right_col = tk.Frame(main_content, bg=self.color_bg)
-        right_col.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True, padx=(10, 0))
+        right_col.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True)
 
         self._build_form(left_col)
         self._build_list(right_col)
@@ -1323,6 +1538,19 @@ class PostitManagerApp:
         self.lbl_app_title.config(text=t("app_title", self.lang))
         self.lbl_app_sub.config(text=t("app_subtitle", self.lang))
         self.check_system_status()
+
+        if self.latest_release_info:
+            self.btn_check_update.config(
+                text=t("btn_update_available", self.lang, version=self.latest_release_tag),
+                bg="#DCFCE7",
+                fg="#15803D"
+            )
+        else:
+            self.btn_check_update.config(
+                text=t("btn_check_update", self.lang),
+                bg="#EFF6FF",
+                fg="#1D4ED8"
+            )
 
         # Form
         self.lbl_form_section.config(text=t("form_section_title", self.lang))
@@ -1595,10 +1823,13 @@ class PostitManagerApp:
         action_bar = tk.Frame(card, bg=self.color_card)
         action_bar.pack(fill=tk.X, pady=(10, 0))
 
+        act_left = tk.Frame(action_bar, bg=self.color_card)
+        act_left.pack(side=tk.LEFT, fill=tk.X, expand=True)
+
         self.btn_desktop = tk.Button(
-            action_bar,
+            act_left,
             text=t("btn_desktop", self.lang),
-            font=(self.sys_font, 10, "bold"),
+            font=(self.sys_font, 9, "bold"),
             bg="#0284C7",
             fg="#FFFFFF",
             activebackground="#0369A1",
@@ -1612,7 +1843,7 @@ class PostitManagerApp:
         self.btn_desktop.pack(side=tk.LEFT, padx=(0, 6))
 
         self.btn_alarm = tk.Button(
-            action_bar,
+            act_left,
             text=t("btn_test_alarm", self.lang),
             font=(self.sys_font, 9, "bold"),
             bg="#D97706",
@@ -1628,7 +1859,7 @@ class PostitManagerApp:
         self.btn_alarm.pack(side=tk.LEFT, padx=(0, 6))
 
         self.btn_preset_from_row = tk.Button(
-            action_bar,
+            act_left,
             text=t("btn_set_as_preset", self.lang),
             font=(self.sys_font, 9, "bold"),
             bg="#FEF3C7",
@@ -1642,8 +1873,25 @@ class PostitManagerApp:
         )
         self.btn_preset_from_row.pack(side=tk.LEFT, padx=(0, 6))
 
+        act_right = tk.Frame(action_bar, bg=self.color_card)
+        act_right.pack(side=tk.RIGHT)
+
+        self.btn_sync = tk.Button(
+            act_right,
+            text=t("btn_sync", self.lang),
+            font=(self.sys_font, 9),
+            bg="#F1F5F9",
+            fg="#334155",
+            relief=tk.FLAT,
+            cursor="hand2",
+            padx=9,
+            pady=7,
+            command=self.manual_sync
+        )
+        self.btn_sync.pack(side=tk.LEFT, padx=(0, 6))
+
         self.btn_delete = tk.Button(
-            action_bar,
+            act_right,
             text=t("btn_delete", self.lang),
             font=(self.sys_font, 9, "bold"),
             bg="#EF4444",
@@ -1652,25 +1900,11 @@ class PostitManagerApp:
             activeforeground="#FFFFFF",
             relief=tk.FLAT,
             cursor="hand2",
-            padx=8,
+            padx=10,
             pady=7,
             command=self.delete_selected_reminder
         )
-        self.btn_delete.pack(side=tk.LEFT, padx=(0, 6))
-
-        self.btn_sync = tk.Button(
-            action_bar,
-            text=t("btn_sync", self.lang),
-            font=(self.sys_font, 9),
-            bg="#F1F5F9",
-            fg="#334155",
-            relief=tk.FLAT,
-            cursor="hand2",
-            padx=8,
-            pady=7,
-            command=self.manual_sync
-        )
-        self.btn_sync.pack(side=tk.RIGHT)
+        self.btn_delete.pack(side=tk.LEFT)
 
     def select_color(self, color_key: str):
         self.selected_color = color_key
@@ -1722,10 +1956,12 @@ class PostitManagerApp:
         else:
             self.badge_daemon.config(text=t("daemon_inactive", self.lang), bg="#FEF3C7", fg="#B45309")
 
-        if not cron_avail:
-            self.badge_cron.config(text=t("cron_not_installed_badge", self.lang), bg="#F1F5F9", fg="#64748B")
-        elif cron_ok:
+        if cron_ok:
             self.badge_cron.config(text=t("cron_active", self.lang), bg="#DCFCE7", fg="#15803D")
+        elif not cron_avail:
+            self.badge_cron.config(text=t("cron_not_installed_badge", self.lang), bg="#F1F5F9", fg="#64748B")
+        elif daemon_ok:
+            self.badge_cron.config(text=t("cron_optional_badge", self.lang), bg="#F1F5F9", fg="#64748B")
         else:
             self.badge_cron.config(text=t("cron_inactive", self.lang), bg="#FEE2E2", fg="#B91C1C")
 
@@ -2048,18 +2284,185 @@ class PostitManagerApp:
         self.lbl_status.config(text=t("status_alarm_tested", self.lang))
 
     def manual_sync(self):
+        """Sincronizza e ricarica sia il demone utente systemd che crontab."""
         reminders = ReminderStore.load_all()
+        cron_ok, cron_msg = False, ""
         try:
-            ok, msg = CronManager.sync_reminders(reminders, lang=self.lang)
+            cron_ok, cron_msg = CronManager.sync_reminders(reminders, lang=self.lang)
         except Exception as e:
-            ok, msg = False, str(e)
+            cron_msg = str(e)
+
+        daemon_restarted = False
+        if CronManager.is_daemon_service_active():
+            try:
+                subprocess.run(["systemctl", "--user", "restart", "postit-daemon"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                daemon_restarted = True
+            except Exception:
+                pass
 
         self.check_system_status()
-        self.lbl_status.config(text=msg)
-        if ok:
-            messagebox.showinfo(t("msg_sync_title", self.lang), msg)
+
+        if daemon_restarted and cron_ok:
+            full_msg = t("sync_all_success", self.lang)
+        elif daemon_restarted:
+            full_msg = t("sync_daemon_success", self.lang)
+        elif cron_ok:
+            full_msg = cron_msg
         else:
-            messagebox.showwarning(t("msg_sync_title", self.lang), msg)
+            full_msg = cron_msg or t("sync_manual_done", self.lang)
+
+        self.lbl_status.config(text=full_msg)
+        messagebox.showinfo(t("msg_sync_title", self.lang), full_msg)
+
+    def check_updates(self, manual: bool = False):
+        """Controlla se ci sono nuove versioni/release su GitHub in un thread asincrono."""
+        if manual:
+            self.lbl_status.config(text=t("msg_checking_updates", self.lang))
+
+        def worker():
+            has_update, release_info, tag = UpdateManager.check_for_updates()
+
+            def on_checked():
+                if manual:
+                    self.lbl_status.config(text=t("status_ready", self.lang))
+
+                if has_update and release_info:
+                    self.latest_release_info = release_info
+                    self.latest_release_tag = tag
+                    self.btn_check_update.config(
+                        text=t("btn_update_available", self.lang, version=tag),
+                        bg="#DCFCE7",
+                        fg="#15803D"
+                    )
+                    self.show_update_dialog(release_info)
+                elif manual:
+                    messagebox.showinfo(
+                        t("msg_no_updates_title", self.lang),
+                        t("msg_no_updates_body", self.lang, version=APP_VERSION),
+                        parent=self.root
+                    )
+
+            self.root.after(0, on_checked)
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def show_update_dialog(self, release_info: dict):
+        """Mostra una finestra modale per l'aggiornamento con note di rilascio e 1-click update."""
+        tag = release_info.get("tag_name", "v1.x.x")
+        dlg = tk.Toplevel(self.root)
+        dlg.title(t("msg_update_window_title", self.lang))
+        dlg.geometry("560x480")
+        dlg.minsize(500, 420)
+        dlg.transient(self.root)
+        dlg.grab_set()
+        dlg.configure(bg="#FFFFFF")
+        apply_app_icon(dlg)
+
+        try:
+            dlg.geometry("+%d+%d" % (
+                self.root.winfo_rootx() + (self.root.winfo_width() - 560) // 2,
+                self.root.winfo_rooty() + (self.root.winfo_height() - 480) // 2
+            ))
+        except Exception:
+            pass
+
+        hdr = tk.Frame(dlg, bg="#EFF6FF", padx=20, pady=16)
+        hdr.pack(fill=tk.X)
+
+        lbl_h = tk.Label(hdr, text=f"🎉 {t('msg_update_header', self.lang)}", font=(self.sys_font, 13, "bold"), bg="#EFF6FF", fg="#1D4ED8")
+        lbl_h.pack(anchor="w")
+
+        info_text = f"{t('msg_current_version', self.lang)} {APP_VERSION}   ➜   {t('msg_latest_version', self.lang)} {tag}"
+        lbl_v = tk.Label(hdr, text=info_text, font=(self.sys_font, 10, "bold"), bg="#EFF6FF", fg="#1E40AF")
+        lbl_v.pack(anchor="w", pady=(4, 0))
+
+        body_frame = tk.Frame(dlg, bg="#FFFFFF", padx=20, pady=12)
+        body_frame.pack(fill=tk.BOTH, expand=True)
+
+        lbl_notes = tk.Label(body_frame, text=t("msg_release_notes", self.lang), font=(self.sys_font, 9, "bold"), bg="#FFFFFF", fg="#475569")
+        lbl_notes.pack(anchor="w", pady=(0, 6))
+
+        txt_notes = tk.Text(body_frame, font=(self.sys_font, 9), bg="#F8FAFC", relief=tk.SOLID, bd=1, wrap=tk.WORD)
+        txt_notes.pack(fill=tk.BOTH, expand=True)
+        raw_body = release_info.get("body", "").strip() or "Nuovo rilascio disponibile con ottimizzazioni e miglioramenti."
+        txt_notes.insert("1.0", raw_body)
+        txt_notes.config(state=tk.DISABLED)
+
+        lbl_progress = tk.Label(body_frame, text="", font=(self.sys_font, 9, "italic"), bg="#FFFFFF", fg="#0284C7")
+        lbl_progress.pack(anchor="w", pady=(6, 0))
+
+        b_bar = tk.Frame(dlg, bg="#FFFFFF", padx=20, pady=14)
+        b_bar.pack(fill=tk.X, side=tk.BOTTOM)
+
+        def do_update():
+            lbl_progress.config(text=t("msg_update_in_progress", self.lang))
+            btn_upd.config(state=tk.DISABLED)
+            dlg.update_idletasks()
+
+            def bg_work():
+                ok, msg = UpdateManager.perform_automatic_update(release_info)
+                def on_done():
+                    if ok:
+                        messagebox.showinfo(
+                            t("msg_update_success_title", self.lang),
+                            t("msg_update_success_body", self.lang, version=tag),
+                            parent=dlg
+                        )
+                        dlg.destroy()
+                    else:
+                        lbl_progress.config(text="")
+                        btn_upd.config(state=tk.NORMAL)
+                        messagebox.showerror(
+                            t("msg_update_error_title", self.lang),
+                            t("msg_update_error_body", self.lang, error=msg),
+                            parent=dlg
+                        )
+                self.root.after(0, on_done)
+
+            threading.Thread(target=bg_work, daemon=True).start()
+
+        btn_upd = tk.Button(
+            b_bar,
+            text=t("btn_update_now", self.lang),
+            font=(self.sys_font, 10, "bold"),
+            bg="#16A34A",
+            fg="#FFFFFF",
+            activebackground="#15803D",
+            relief=tk.FLAT,
+            cursor="hand2",
+            padx=12,
+            pady=7,
+            command=do_update
+        )
+        btn_upd.pack(side=tk.LEFT, padx=(0, 8))
+
+        btn_gh = tk.Button(
+            b_bar,
+            text=t("btn_view_github", self.lang),
+            font=(self.sys_font, 9),
+            bg="#F1F5F9",
+            fg="#334155",
+            relief=tk.FLAT,
+            cursor="hand2",
+            padx=10,
+            pady=7,
+            command=lambda: webbrowser.open(release_info.get("html_url", GITHUB_RELEASES_URL))
+        )
+        btn_gh.pack(side=tk.LEFT, padx=(0, 8))
+
+        btn_cancel = tk.Button(
+            b_bar,
+            text=t("btn_close_dialog", self.lang),
+            font=(self.sys_font, 9),
+            bg="#F1F5F9",
+            fg="#64748B",
+            relief=tk.FLAT,
+            cursor="hand2",
+            padx=10,
+            pady=7,
+            command=dlg.destroy
+        )
+        btn_cancel.pack(side=tk.RIGHT)
 
     def refresh_reminders_table(self):
         for row in self.tree.get_children():

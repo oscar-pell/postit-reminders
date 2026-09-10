@@ -47,8 +47,12 @@ Unlike traditional ephemeral desktop notifications that fade away after a few se
   - 🌸 Pastel Pink
 - **✍️ Rich Text Formatting Toolbar**:
   Inline support for **Bold**, *Italic*, <u>Underline</u>, ==Yellow Highlight==, • Bulleted Lists, and H3 Section Headers.
+- **🔄 Automatic GitHub Release Checker & 1-Click Updater**:
+  Built-in non-blocking updater querying the GitHub Releases API. When a new version is published, an alert badge appears in the header with release notes and 1-click self-updating.
+- **🖥️ Spacious & Responsive Centered UI Layout**:
+  Generous 1160x800 layout centered on screen with smart button clustering, preventing buttons or form controls from ever being clipped or hidden regardless of display scaling.
 - **🐧 Universal Linux Compatibility (Wayland & X11)**:
-  Works out of the box on **Ubuntu, Fedora, Arch Linux, Debian, openSUSE** across any Desktop Environment (**GNOME, KDE Plasma, XFCE, Cinnamon, Sway, Hyprland**).
+  Works out of the box on **Ubuntu, Fedora (including Silverblue, Bazzite, Atomic), Arch Linux, Debian, openSUSE** across any Desktop Environment (**GNOME, KDE Plasma, XFCE, Cinnamon, Sway, Hyprland**).
 - **🛡️ Native Dock & Taskbar Integration**:
   Proper `postit-manager` class and `StartupWMClass` matching with scalable SVG and hicolor raster icons (no generic gear icon in your dock!).
 

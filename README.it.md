@@ -47,8 +47,12 @@ A differenza delle notifiche tradizionali effimere che scompaiono dopo pochi sec
   - 🌸 Rosa Pastello
 - **✍️ Toolbar di Formattazione Testo Avanzata**:
   Supporto per **Grassetto**, *Corsivo*, <u>Sottolineato</u>, ==Evidenziatore Giallo==, • Elenchi Puntati e Intestazioni H3.
+- **🔄 Verifica Aggiornamenti Automatica da GitHub e 1-Click Updater**:
+  Controllo asincrono integrato con le API di GitHub Releases. All'avvio dell'applicazione (o tramite il pulsante dedicato nella barra superiore), segnala con un badge se è disponibile una nuova release e consente l'aggiornamento automatico con visualizzazione delle note di versione.
+- **🖥️ Layout Ampio, Spazioso e Centrato sullo Schermo**:
+  Finestra ampliata a 1160x800 e centrata automaticamente sul monitor, con pulsanti d'azione raggruppati con cura per garantire che nessun comando venga tagliato o nascosto.
 - **🐧 Compatibilità Universale Linux (Wayland & X11)**:
-  Funziona nativamente su **Ubuntu, Fedora, Arch Linux, Debian, openSUSE** e su qualsiasi Desktop Environment (**GNOME, KDE Plasma, XFCE, Cinnamon, Sway, Hyprland**).
+  Funziona nativamente su **Ubuntu, Fedora (inclusi Silverblue, Bazzite, Atomic), Arch Linux, Debian, openSUSE** e su qualsiasi Desktop Environment (**GNOME, KDE Plasma, XFCE, Cinnamon, Sway, Hyprland**).
 - **🛡️ Integrazione Perfetta con la Dock di Sistema**:
   Classe `postit-manager` e `StartupWMClass` coerenti con icone vettoriali e raster hicolor (nessun ingranaggio generico nella dock!).
 
