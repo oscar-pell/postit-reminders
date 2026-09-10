@@ -26,7 +26,7 @@ import webbrowser
 from pathlib import Path
 
 # Versione applicazione
-APP_VERSION = "1.1.6"
+APP_VERSION = "1.1.7"
 GITHUB_REPO = "oscar-pell/postit-reminders"
 GITHUB_RELEASES_URL = f"https://github.com/{GITHUB_REPO}/releases"
 GITHUB_API_LATEST = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
@@ -189,6 +189,13 @@ TRANSLATIONS = {
         "status_data": "Dati: {filename}",
 
         "form_section_title": "Crea o Modifica Post-it",
+        "form_section_new": "➕ Nuovo Promemoria",
+        "form_section_edit": "✏️ Modifica Promemoria",
+        "badge_new_mode": "CREAZIONE",
+        "badge_edit_mode": "MODIFICA",
+        "btn_new_reminder": "Nuovo Promemoria",
+        "btn_cancel_edit": "➕ Crea Nuovo Promemoria",
+        "btn_cancel_edit_short": "✖ Annulla",
         "btn_preset_format": "⚡ Carica Preset: {title} ({time})",
         "btn_preset_empty": "⚡ Preset Rapido: (Nessun preset memorizzato - clicca qui)",
         "lbl_bg_color": "Colore Sfondo Post-it:",
@@ -297,10 +304,14 @@ TRANSLATIONS = {
         "sync_daemon_success": "✓ Demone Systemd ricaricato con successo (promemoria attivi)!",
         "sync_manual_done": "✓ Schedulatore sincronizzato.",
 
+        "tree_context_edit": "✏️ Modifica nel modulo",
+        "tree_context_new": "➕ Crea nuovo promemoria",
+        "status_new_mode": "Modulo reimpostato: modalità creazione nuovo promemoria.",
+        "status_edit_mode": "✏️ Modifica di '{title}'. Clicca 'Nuovo Promemoria' per crearne un altro da zero.",
         "status_preset_loaded": "✓ Preset '{title}' caricato nel modulo.",
         "status_preset_stored": "⭐ Preset '{title}' memorizzato con successo!",
-        "status_form_cleared": "Modulo ripulito.",
-        "status_reminder_loaded": "Caricato promemoria: '{title}'",
+        "status_form_cleared": "Modulo ripulito (modalità nuovo promemoria).",
+        "status_reminder_loaded": "Caricato promemoria per modifica: '{title}'",
         "status_reminder_saved": "✓ Promemoria '{title}' salvato!",
         "status_reminder_deleted": "Promemoria eliminato.",
         "status_reminders_deleted_multiple": "✓ Eliminati {count} promemoria con successo.",
@@ -349,6 +360,13 @@ TRANSLATIONS = {
         "status_data": "Data: {filename}",
 
         "form_section_title": "Create or Edit Post-it",
+        "form_section_new": "➕ New Reminder",
+        "form_section_edit": "✏️ Edit Reminder",
+        "badge_new_mode": "NEW",
+        "badge_edit_mode": "EDITING",
+        "btn_new_reminder": "New Reminder",
+        "btn_cancel_edit": "➕ Create New Reminder",
+        "btn_cancel_edit_short": "✖ Cancel",
         "btn_preset_format": "⚡ Load Preset: {title} ({time})",
         "btn_preset_empty": "⚡ Quick Preset: (No preset stored - click for info)",
         "lbl_bg_color": "Post-it Background Color:",
@@ -457,10 +475,14 @@ TRANSLATIONS = {
         "sync_daemon_success": "✓ Systemd Daemon successfully reloaded (active reminders)!",
         "sync_manual_done": "✓ Scheduler synchronized.",
 
+        "tree_context_edit": "✏️ Edit in form",
+        "tree_context_new": "➕ Create new reminder",
+        "status_new_mode": "Form reset: new reminder creation mode.",
+        "status_edit_mode": "✏️ Editing '{title}'. Click 'New Reminder' to create another from scratch.",
         "status_preset_loaded": "✓ Preset '{title}' loaded into form.",
         "status_preset_stored": "⭐ Preset '{title}' saved successfully!",
-        "status_form_cleared": "Form cleared.",
-        "status_reminder_loaded": "Loaded reminder: '{title}'",
+        "status_form_cleared": "Form cleared (new reminder mode).",
+        "status_reminder_loaded": "Loaded reminder for editing: '{title}'",
         "status_reminder_saved": "✓ Reminder '{title}' saved!",
         "status_reminder_deleted": "Reminder deleted.",
         "status_reminders_deleted_multiple": "✓ Successfully deleted {count} reminders.",
@@ -902,35 +924,67 @@ class UpdateManager:
         """
         Controlla l'ultima release disponibile su GitHub.
         Ritorna: (has_update: bool, release_info: dict | None, latest_tag: str)
+        Include fallback a raw.githubusercontent.com in caso di rate-limit API o problemi di rete.
         """
-        req = urllib.request.Request(
-            GITHUB_API_LATEST,
-            headers={
-                "User-Agent": "PostitReminders-App",
-                "Accept": "application/vnd.github.v3+json"
-            }
-        )
+        current_ver = UpdateManager.parse_version(APP_VERSION)
+        api_err = None
+
+        # 1. Tentativo primario con GitHub Releases API
         try:
-            with urllib.request.urlopen(req, timeout=5) as resp:
-                if resp.status != 200:
-                    return False, None, f"HTTP {resp.status}"
-                data = json.loads(resp.read().decode("utf-8"))
-                latest_tag = data.get("tag_name", "").strip()
-                latest_ver = UpdateManager.parse_version(latest_tag)
-                current_ver = UpdateManager.parse_version(APP_VERSION)
-                has_update = latest_ver > current_ver
-                return has_update, data, latest_tag
+            req = urllib.request.Request(
+                GITHUB_API_LATEST,
+                headers={
+                    "User-Agent": "PostitReminders-App",
+                    "Accept": "application/vnd.github.v3+json"
+                }
+            )
+            with urllib.request.urlopen(req, timeout=8) as resp:
+                if resp.status == 200:
+                    data = json.loads(resp.read().decode("utf-8"))
+                    latest_tag = data.get("tag_name", "").strip()
+                    latest_ver = UpdateManager.parse_version(latest_tag)
+                    has_update = latest_ver > current_ver
+                    return has_update, data, latest_tag
+                else:
+                    api_err = f"HTTP {resp.status}"
         except Exception as e:
-            return False, None, str(e)
+            api_err = str(e)
+
+        # 2. Fallback resiliente via raw.githubusercontent.com (evita blocchi da 403 rate-limit o API down)
+        try:
+            raw_url = f"https://raw.githubusercontent.com/{GITHUB_REPO}/main/src/postit_manager.py"
+            req_raw = urllib.request.Request(raw_url, headers={"User-Agent": "PostitReminders-App"})
+            with urllib.request.urlopen(req_raw, timeout=8) as resp:
+                if resp.status == 200:
+                    chunk = resp.read(4096).decode("utf-8", errors="ignore")
+                    m = re.search(r'APP_VERSION\s*=\s*[\"\']([^\"\']+)[\"\']', chunk)
+                    if m:
+                        remote_ver_str = m.group(1).strip()
+                        remote_ver = UpdateManager.parse_version(remote_ver_str)
+                        if remote_ver > current_ver:
+                            tag_str = f"v{remote_ver_str}" if not remote_ver_str.startswith("v") else remote_ver_str
+                            synthetic_release = {
+                                "tag_name": tag_str,
+                                "name": f"v{remote_ver_str}",
+                                "body": f"Nuova versione {remote_ver_str} disponibile su GitHub (rilevata tramite sorgente)."
+                            }
+                            return True, synthetic_release, tag_str
+                        else:
+                            return False, None, remote_ver_str
+        except Exception:
+            pass
+
+        return False, None, api_err or "Impossibile contattare GitHub"
 
     @staticmethod
     def perform_automatic_update(release_info: dict) -> tuple[bool, str]:
         """
         Scarica e installa l'ultima versione dell'applicazione.
-        Tenta prima l'aggiornamento tramite git pull se presente un repository locale,
-        altrimenti scarica e aggiorna i binari utente direttamente da GitHub.
+        Tenta prima l'aggiornamento tramite git se presente un repository locale valido,
+        altrimenti scarica e aggiorna sia i binari utente (~/.local/bin) che lo script in esecuzione.
         """
         tag = release_info.get("tag_name", "main")
+        err_details = []
 
         # 1. Tentativo con git se esiste un repository locale
         candidate_git_dirs = [
@@ -941,40 +995,86 @@ class UpdateManager:
             if (g_dir / ".git").is_dir() and (g_dir / "install.sh").exists():
                 try:
                     subprocess.run(
-                        ["git", "pull", "--ff-only", "origin", "main"],
+                        ["git", "fetch", "--all", "--tags"],
                         cwd=str(g_dir),
                         stdout=subprocess.PIPE,
                         stderr=subprocess.PIPE,
                         text=True,
-                        timeout=15,
+                        timeout=20,
                         check=True
                     )
-                    subprocess.run(
-                        ["bash", str(g_dir / "install.sh")],
-                        cwd=str(g_dir),
-                        stdout=subprocess.PIPE,
-                        stderr=subprocess.PIPE,
-                        text=True,
-                        timeout=30,
-                        check=True
-                    )
-                    return True, f"Aggiornato con successo da repository locale ({tag})."
-                except Exception:
-                    pass
+                    checked_out = False
+                    for target_ref in [tag, f"tags/{tag}", "main", "origin/main"]:
+                        try:
+                            subprocess.run(
+                                ["git", "checkout", "-f", target_ref],
+                                cwd=str(g_dir),
+                                stdout=subprocess.PIPE,
+                                stderr=subprocess.PIPE,
+                                text=True,
+                                timeout=15,
+                                check=True
+                            )
+                            if target_ref in ["main", "origin/main"]:
+                                subprocess.run(
+                                    ["git", "reset", "--hard", "origin/main"],
+                                    cwd=str(g_dir),
+                                    stdout=subprocess.PIPE,
+                                    stderr=subprocess.PIPE,
+                                    text=True,
+                                    timeout=15,
+                                    check=True
+                                )
+                            checked_out = True
+                            break
+                        except Exception:
+                            continue
+
+                    if checked_out:
+                        try:
+                            subprocess.run(
+                                ["bash", str(g_dir / "install.sh")],
+                                cwd=str(g_dir),
+                                stdout=subprocess.PIPE,
+                                stderr=subprocess.PIPE,
+                                text=True,
+                                timeout=45,
+                                check=True
+                            )
+                        except Exception:
+                            bin_dir = USER_HOME / ".local" / "bin"
+                            bin_dir.mkdir(parents=True, exist_ok=True)
+                            shutil.copy2(g_dir / "src" / "postit_manager.py", bin_dir / "postit_manager.py")
+                            shutil.copy2(g_dir / "src" / "postit-runner.sh", bin_dir / "postit-runner.sh")
+                            (bin_dir / "postit_manager.py").chmod(0o755)
+                            (bin_dir / "postit-runner.sh").chmod(0o755)
+
+                        return True, f"Aggiornato con successo da repository locale ({tag})."
+                except Exception as ex_git:
+                    err_details.append(f"Git: {ex_git}")
 
         # 2. Aggiornamento diretto da GitHub Raw
         try:
-            raw_base = f"https://raw.githubusercontent.com/{GITHUB_REPO}/{tag}"
-            py_url = f"{raw_base}/src/postit_manager.py"
-            sh_url = f"{raw_base}/src/postit-runner.sh"
+            def fetch_file(subpath: str) -> str:
+                candidates = [tag, tag.lstrip("v"), f"v{tag}", "main"]
+                seen = set()
+                last_err = None
+                for ref in candidates:
+                    if ref in seen:
+                        continue
+                    seen.add(ref)
+                    url = f"https://raw.githubusercontent.com/{GITHUB_REPO}/{ref}/{subpath}"
+                    try:
+                        req = urllib.request.Request(url, headers={"User-Agent": "PostitReminders-App"})
+                        with urllib.request.urlopen(req, timeout=15) as resp:
+                            if resp.status == 200:
+                                return resp.read().decode("utf-8")
+                    except Exception as e_ref:
+                        last_err = e_ref
+                raise RuntimeError(f"Impossibile scaricare {subpath}: {last_err}")
 
-            req_py = urllib.request.Request(py_url, headers={"User-Agent": "PostitReminders-App"})
-            with urllib.request.urlopen(req_py, timeout=12) as resp:
-                py_code = resp.read().decode("utf-8")
-
-            req_sh = urllib.request.Request(sh_url, headers={"User-Agent": "PostitReminders-App"})
-            with urllib.request.urlopen(req_sh, timeout=12) as resp:
-                sh_code = resp.read().decode("utf-8")
+            py_code = fetch_file("src/postit_manager.py")
+            sh_code = fetch_file("src/postit-runner.sh")
 
             bin_dir = USER_HOME / ".local" / "bin"
             bin_dir.mkdir(parents=True, exist_ok=True)
@@ -987,14 +1087,46 @@ class UpdateManager:
             res_test = subprocess.run([sys.executable, "-m", "py_compile", str(tmp_py)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             if res_test.returncode != 0:
                 tmp_py.unlink(missing_ok=True)
-                return False, "File scaricato non valido (errore di compilazione)."
+                return False, "File scaricato non valido (errore di compilazione Python)."
 
             target_py = bin_dir / "postit_manager.py"
             tmp_py.replace(target_py)
+            target_py.chmod(0o755)
 
             target_sh = bin_dir / "postit-runner.sh"
             target_sh.write_text(sh_code, encoding="utf-8")
             target_sh.chmod(0o755)
+
+            symlink_mgr = bin_dir / "postit-manager"
+            try:
+                if symlink_mgr.is_symlink() or not symlink_mgr.exists():
+                    symlink_mgr.unlink(missing_ok=True)
+                    symlink_mgr.symlink_to(target_sh)
+            except Exception:
+                pass
+
+            # Aggiorna anche il file attualmente in esecuzione se diverso da ~/.local/bin/postit_manager.py
+            current_exec = Path(__file__).resolve()
+            if current_exec != target_py and current_exec.is_file():
+                try:
+                    current_exec.write_text(py_code, encoding="utf-8")
+                    current_exec.chmod(0o755)
+                    runner_sib = current_exec.parent / "postit-runner.sh"
+                    if runner_sib.is_file():
+                        runner_sib.write_text(sh_code, encoding="utf-8")
+                        runner_sib.chmod(0o755)
+                except Exception:
+                    pass
+
+            # Aggiorna anche cartella clone standard ~/postit-reminders se presente
+            std_clone_py = USER_HOME / "postit-reminders" / "src" / "postit_manager.py"
+            if std_clone_py.is_file() and std_clone_py != target_py and std_clone_py != current_exec:
+                try:
+                    std_clone_py.write_text(py_code, encoding="utf-8")
+                    std_clone_py.chmod(0o755)
+                    (USER_HOME / "postit-reminders" / "src" / "postit-runner.sh").write_text(sh_code, encoding="utf-8")
+                except Exception:
+                    pass
 
             if CronManager.is_daemon_service_active():
                 try:
@@ -1004,7 +1136,10 @@ class UpdateManager:
 
             return True, f"Aggiornato con successo alla versione {tag} in {bin_dir}."
         except Exception as e:
-            return False, f"Errore durante l'aggiornamento: {e}"
+            msg = f"{e}"
+            if err_details:
+                msg += f" (Dettagli: {'; '.join(err_details)})"
+            return False, f"Errore durante l'aggiornamento: {msg}"
 
 
 class ToolTip:
@@ -1617,6 +1752,9 @@ class PostitManagerApp:
 
         self.is_fullscreen = False
         self.root.bind("<F11>", self.toggle_fullscreen)
+        self.root.bind("<Control-n>", self.switch_to_new_reminder_mode)
+        self.root.bind("<Control-N>", self.switch_to_new_reminder_mode)
+        self.root.bind("<Escape>", lambda e: self.switch_to_new_reminder_mode() if self.editing_id else None)
 
         apply_app_icon(self.root)
 
@@ -1808,8 +1946,25 @@ class PostitManagerApp:
                 fg="#1D4ED8"
             )
 
-        # Form
-        self.lbl_form_section.config(text=t("form_section_title", self.lang))
+        # Form & Mode
+        if getattr(self, "editing_id", None):
+            self.lbl_form_section.config(text=t("form_section_edit", self.lang))
+            if hasattr(self, "badge_form_mode"):
+                self.badge_form_mode.config(text=t("badge_edit_mode", self.lang))
+            self.btn_save.config(text=t("btn_update_reminder", self.lang))
+        else:
+            self.lbl_form_section.config(text=t("form_section_new", self.lang))
+            if hasattr(self, "badge_form_mode"):
+                self.badge_form_mode.config(text=t("badge_new_mode", self.lang))
+            self.btn_save.config(text=t("btn_save_reminder", self.lang))
+
+        if hasattr(self, "btn_form_new"):
+            self.btn_form_new.config(text="➕ " + t("btn_new_reminder", self.lang))
+        if hasattr(self, "btn_table_new"):
+            self.btn_table_new.config(text="➕ " + t("btn_new_reminder", self.lang))
+        if hasattr(self, "btn_cancel_edit"):
+            self.btn_cancel_edit.config(text=t("btn_cancel_edit", self.lang))
+
         self.update_preset_button()
         self.lbl_colors.config(text=t("lbl_bg_color", self.lang))
         self.lbl_selected_color_name.config(text=get_color_name(self.selected_color, self.lang))
@@ -1832,10 +1987,6 @@ class PostitManagerApp:
         self.btn_reset_fmt.config(text=t("btn_clean", self.lang))
         self.lbl_links.config(text=t("lbl_links", self.lang))
 
-        if self.editing_id:
-            self.btn_save.config(text=t("btn_update_reminder", self.lang))
-        else:
-            self.btn_save.config(text=t("btn_save_reminder", self.lang))
         self.btn_save_as_preset.config(text=t("btn_save_as_preset", self.lang))
         self.btn_clear.config(text=t("btn_clear", self.lang))
 
@@ -1863,8 +2014,48 @@ class PostitManagerApp:
         card = tk.Frame(container, bg=self.color_card, padx=16, pady=14, highlightbackground=self.color_border, highlightthickness=1)
         card.pack(fill=tk.BOTH, expand=True)
 
-        self.lbl_form_section = tk.Label(card, text=t("form_section_title", self.lang), font=(self.sys_font, 12, "bold"), bg=self.color_card, fg=self.color_text)
-        self.lbl_form_section.pack(anchor="w", pady=(0, 8))
+        form_header = tk.Frame(card, bg=self.color_card)
+        form_header.pack(fill=tk.X, pady=(0, 8))
+
+        form_header_left = tk.Frame(form_header, bg=self.color_card)
+        form_header_left.pack(side=tk.LEFT, fill=tk.Y)
+
+        self.lbl_form_section = tk.Label(
+            form_header_left,
+            text=t("form_section_new", self.lang),
+            font=(self.sys_font, 12, "bold"),
+            bg=self.color_card,
+            fg=self.color_text
+        )
+        self.lbl_form_section.pack(side=tk.LEFT)
+
+        self.badge_form_mode = tk.Label(
+            form_header_left,
+            text=t("badge_new_mode", self.lang),
+            font=(self.sys_font, 7, "bold"),
+            bg="#DCFCE7",
+            fg="#15803D",
+            padx=6,
+            pady=2,
+            relief=tk.FLAT
+        )
+        self.badge_form_mode.pack(side=tk.LEFT, padx=(8, 0))
+
+        self.btn_form_new = tk.Button(
+            form_header,
+            text="➕ " + t("btn_new_reminder", self.lang),
+            font=(self.sys_font, 8, "bold"),
+            bg="#EFF6FF",
+            fg="#1D4ED8",
+            activebackground="#DBEAFE",
+            activeforeground="#1E40AF",
+            relief=tk.FLAT,
+            cursor="hand2",
+            padx=8,
+            pady=2,
+            command=self.switch_to_new_reminder_mode
+        )
+        self.btn_form_new.pack(side=tk.RIGHT)
 
         # PULSANTE PRESET RAPIDO DINAMICO (configurabile)
         self.btn_preset = tk.Button(
@@ -1992,6 +2183,7 @@ class PostitManagerApp:
 
         row_actions = tk.Frame(card, bg=self.color_card)
         row_actions.pack(fill=tk.X)
+        self.row_actions_frame = row_actions
 
         self.btn_save = tk.Button(
             row_actions,
@@ -2008,6 +2200,21 @@ class PostitManagerApp:
             command=self.save_reminder_from_form
         )
         self.btn_save.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 6))
+
+        self.btn_cancel_edit = tk.Button(
+            row_actions,
+            text=t("btn_cancel_edit", self.lang),
+            font=(self.sys_font, 9, "bold"),
+            bg="#EFF6FF",
+            fg="#1D4ED8",
+            activebackground="#DBEAFE",
+            relief=tk.FLAT,
+            cursor="hand2",
+            padx=8,
+            pady=7,
+            command=self.switch_to_new_reminder_mode
+        )
+        # Note: self.btn_cancel_edit will be packed dynamically when editing_id is active
 
         self.btn_save_as_preset = tk.Button(
             row_actions,
@@ -2063,6 +2270,22 @@ class PostitManagerApp:
             command=self.toggle_select_all
         )
         self.btn_select_all.pack(side=tk.LEFT, padx=(12, 0))
+
+        self.btn_table_new = tk.Button(
+            header_row,
+            text="➕ " + t("btn_new_reminder", self.lang),
+            font=(self.sys_font, 9, "bold"),
+            bg="#16A34A",
+            fg="#FFFFFF",
+            activebackground="#15803D",
+            activeforeground="#FFFFFF",
+            relief=tk.FLAT,
+            cursor="hand2",
+            padx=10,
+            pady=3,
+            command=self.switch_to_new_reminder_mode
+        )
+        self.btn_table_new.pack(side=tk.RIGHT, padx=(8, 0))
 
         self.lbl_hint = tk.Label(header_row, text=t("table_double_click_hint", self.lang), font=(self.sys_font, 8, "italic"), bg=self.color_card, fg="#64748B")
         self.lbl_hint.pack(side=tk.RIGHT)
@@ -2436,9 +2659,54 @@ class PostitManagerApp:
         else:
             messagebox.showerror(t("msg_error_title", self.lang), t("msg_preset_save_error", self.lang))
 
-    def clear_form(self):
+    def set_form_mode(self, editing: bool, title: str = ""):
+        """Configura l'aspetto visivo del modulo tra creazione nuovo o modifica esistente."""
+        if editing:
+            self.lbl_form_section.config(text=t("form_section_edit", self.lang))
+            if hasattr(self, "badge_form_mode"):
+                self.badge_form_mode.config(
+                    text=t("badge_edit_mode", self.lang),
+                    bg="#FEF3C7",
+                    fg="#92400E"
+                )
+            self.btn_save.config(
+                text=t("btn_update_reminder", self.lang),
+                bg="#16A34A",
+                activebackground="#15803D"
+            )
+            if hasattr(self, "btn_cancel_edit") and hasattr(self, "btn_save_as_preset"):
+                self.btn_cancel_edit.pack(side=tk.LEFT, padx=(0, 6), before=self.btn_save_as_preset)
+        else:
+            self.editing_id = None
+            self.lbl_form_section.config(text=t("form_section_new", self.lang))
+            if hasattr(self, "badge_form_mode"):
+                self.badge_form_mode.config(
+                    text=t("badge_new_mode", self.lang),
+                    bg="#DCFCE7",
+                    fg="#15803D"
+                )
+            self.btn_save.config(
+                text=t("btn_save_reminder", self.lang),
+                bg="#3584E4",
+                activebackground="#1D72D6"
+            )
+            if hasattr(self, "btn_cancel_edit"):
+                self.btn_cancel_edit.pack_forget()
+
+    def switch_to_new_reminder_mode(self, event=None, clear_fields: bool = True):
+        """Passa esplicitamente alla modalità di creazione di un nuovo promemoria da zero."""
         self.editing_id = None
-        self.btn_save.config(text=t("btn_save_reminder", self.lang))
+        self.tree.selection_set([])
+        if clear_fields:
+            self.clear_form(silent=True)
+        self.set_form_mode(editing=False)
+        self.entry_title.focus_set()
+        self.entry_title.select_range(0, tk.END)
+        self.lbl_status.config(text=t("status_new_mode", self.lang))
+        return "break"
+
+    def clear_form(self, silent: bool = False):
+        self.editing_id = None
         self.entry_time.delete(0, tk.END)
         self.entry_time.insert(0, "18:00")
         self.combo_freq.set(t("freq_weekdays", self.lang))
@@ -2451,7 +2719,9 @@ class PostitManagerApp:
         self.entry_l1_url.delete(0, tk.END)
         self.entry_l2_label.delete(0, tk.END)
         self.entry_l2_url.delete(0, tk.END)
-        self.lbl_status.config(text=t("status_form_cleared", self.lang))
+        self.set_form_mode(editing=False)
+        if not silent:
+            self.lbl_status.config(text=t("status_form_cleared", self.lang))
 
     def toggle_select_all(self, event=None):
         """Seleziona o deseleziona tutti i promemoria nella tabella."""
@@ -2461,7 +2731,7 @@ class PostitManagerApp:
         current_sel = self.tree.selection()
         if len(current_sel) == len(all_items):
             self.tree.selection_set([])
-            self.clear_form()
+            self.switch_to_new_reminder_mode(clear_fields=True)
             if hasattr(self, "btn_select_all"):
                 self.btn_select_all.config(text="🔘 " + t("btn_select_all", self.lang))
             self.btn_delete.config(text=t("btn_delete", self.lang))
@@ -2491,10 +2761,12 @@ class PostitManagerApp:
         self.tree_menu.add_command(label=desk_lbl, command=self.put_selected_on_desktop)
 
         if count == 1:
+            self.tree_menu.add_command(label=f"✏️ {t('tree_context_edit', self.lang)}", command=lambda: self.on_tree_select(None))
             self.tree_menu.add_command(label=f"👁️ {t('btn_test_alarm', self.lang)}", command=self.test_alarm_now)
             self.tree_menu.add_command(label=f"⭐ {t('btn_set_as_preset', self.lang)}", command=self.set_selected_as_preset)
 
         self.tree_menu.add_separator()
+        self.tree_menu.add_command(label=f"➕ {t('tree_context_new', self.lang)}  [Ctrl+N]", command=self.switch_to_new_reminder_mode)
         del_lbl = f"🗑️ {t('btn_delete', self.lang)} ({count})  [Canc]" if count > 1 else f"🗑️ {t('btn_delete', self.lang)}  [Canc]"
         self.tree_menu.add_command(label=del_lbl, command=self.delete_selected_reminder)
         self.tree_menu.add_separator()
@@ -2523,6 +2795,7 @@ class PostitManagerApp:
         if len(selected) > 1:
             self.btn_delete.config(text=f"🗑️ {t('btn_delete', self.lang)} ({len(selected)})")
             self.lbl_status.config(text=t("status_multiple_selected", self.lang, count=len(selected)))
+            self.set_form_mode(editing=False)
             return
 
         self.btn_delete.config(text=t("btn_delete", self.lang))
@@ -2532,7 +2805,7 @@ class PostitManagerApp:
             return
 
         self.editing_id = rem.get("id")
-        self.btn_save.config(text=t("btn_update_reminder", self.lang))
+        self.set_form_mode(editing=True, title=rem.get("title", ""))
 
         self.entry_time.delete(0, tk.END)
         self.entry_time.insert(0, rem.get("time", "18:00"))
@@ -2562,7 +2835,7 @@ class PostitManagerApp:
             self.entry_l2_label.insert(0, links[1].get("label", ""))
             self.entry_l2_url.insert(0, links[1].get("url", ""))
 
-        self.lbl_status.config(text=t("status_reminder_loaded", self.lang, title=rem.get('title')))
+        self.lbl_status.config(text=t("status_edit_mode", self.lang, title=rem.get('title')))
 
     def save_reminder_from_form(self):
         time_str = self.entry_time.get().strip()
@@ -2865,7 +3138,14 @@ class PostitManagerApp:
                             parent=dlg
                         )
                         if relaunch:
-                            runner = [str(RUNNER_SH.resolve())] if RUNNER_SH.exists() else [sys.executable, str(Path(__file__).resolve())]
+                            current_exec = Path(__file__).resolve()
+                            installed_mgr = USER_HOME / ".local" / "bin" / "postit_manager.py"
+                            if RUNNER_SH.exists() and current_exec == installed_mgr:
+                                runner = [str(RUNNER_SH.resolve())]
+                            elif RUNNER_SH.exists() and not current_exec.is_file():
+                                runner = [str(RUNNER_SH.resolve())]
+                            else:
+                                runner = [sys.executable, str(current_exec)]
                             try:
                                 subprocess.Popen(
                                     runner,
