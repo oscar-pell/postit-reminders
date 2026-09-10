@@ -26,7 +26,7 @@ import webbrowser
 from pathlib import Path
 
 # Versione applicazione
-APP_VERSION = "1.1.4"
+APP_VERSION = "1.1.5"
 GITHUB_REPO = "oscar-pell/postit-reminders"
 GITHUB_RELEASES_URL = f"https://github.com/{GITHUB_REPO}/releases"
 GITHUB_API_LATEST = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
@@ -175,6 +175,15 @@ TRANSLATIONS = {
         "daemon_inactive": "⚠️ Demone: INATTIVO",
         "cron_active": "● Cron: ATTIVO",
         "cron_inactive": "⚠️ Cron: INATTIVO",
+        "status_service_active_systemd": "● Servizio: ATTIVO (Systemd)",
+        "status_service_active_cron": "● Servizio: ATTIVO (Cron)",
+        "status_service_active_both": "● Servizio: ATTIVO (Systemd + Cron)",
+        "status_service_inactive": "⚠️ Servizio: NON ATTIVO",
+        "tooltip_service_systemd": "Il demone utente Systemd è attivo e controlla i tuoi promemoria ogni minuto in background.\nI promemoria appariranno puntualmente. (Crontab non necessario su questo sistema).\n\n💡 Clicca per informazioni sullo stato.",
+        "tooltip_service_both": "Tutti i motori sono attivi: demone Systemd e schedulatore Crontab sincronizzati.\n\n💡 Clicca per informazioni sullo stato.",
+        "tooltip_service_cron": "I promemoria sono pianificati tramite il servizio Crontab di sistema.\n\n💡 Clicca per informazioni sullo stato.",
+        "tooltip_service_inactive": "Nessun servizio di notifica attivo in background.\nI promemoria non scatteranno automaticamente.\n\n💡 Clicca per avviare o sincronizzare il servizio.",
+        "title_service_status": "Stato Servizio Promemoria",
 
         "status_ready": "Pronto.",
         "status_data": "Dati: {filename}",
@@ -241,7 +250,7 @@ TRANSLATIONS = {
         "msg_title_required_title": "Titolo obbligatorio",
         "msg_title_required_body": "Inserisci un titolo per il promemoria.",
         "msg_save_success_title": "Salvataggio Completato",
-        "msg_save_success_body": "Il promemoria '{title}' è stato salvato.\nSarà attivato sia dal demone di sistema sia da Cron.",
+        "msg_save_success_body": "Il promemoria '{title}' è stato salvato ed è attivo nel sistema.",
         "msg_save_error": "Impossibile salvare il promemoria.",
         "msg_delete_confirm_title": "Conferma eliminazione",
         "msg_delete_confirm_body": "Vuoi davvero eliminare '{title}'?",
@@ -298,7 +307,7 @@ TRANSLATIONS = {
         "postit_status_pinned": "Fissato sopra tutte le finestre",
         "postit_status_unpinned": "Libero (può andare sotto le finestre)",
         "postit_btn_alarm": "🚨 SOVRAIMPRESSIONE",
-        "postit_alarm_banner": "🚨 È ARRIVATO L'ORARIO STABILITO! CONTROLLA I TUOI COMPITI",
+        "postit_alarm_banner": "🚨 È arrivato l'orario stabilito! Controlla i tuoi compiti",
         "postit_alarm_status": "⏰ È scattato l'orario del promemoria!",
         "postit_alarm_notification_body": "È arrivato l'orario stabilito!",
         "postit_press_esc": "Premi Esc per chiudere",
@@ -318,6 +327,15 @@ TRANSLATIONS = {
         "daemon_inactive": "⚠️ Daemon: INACTIVE",
         "cron_active": "● Cron: ACTIVE",
         "cron_inactive": "⚠️ Cron: INACTIVE",
+        "status_service_active_systemd": "● Service: ACTIVE (Systemd)",
+        "status_service_active_cron": "● Service: ACTIVE (Cron)",
+        "status_service_active_both": "● Service: ACTIVE (Systemd + Cron)",
+        "status_service_inactive": "⚠️ Service: INACTIVE",
+        "tooltip_service_systemd": "Systemd user daemon is active and checks reminders every minute in background.\nReminders will trigger on time. (Crontab not required on this system).\n\n💡 Click for service details.",
+        "tooltip_service_both": "All notification engines active: Systemd daemon and Crontab are synchronized.\n\n💡 Click for service details.",
+        "tooltip_service_cron": "Reminders are scheduled via system Crontab service.\n\n💡 Click for service details.",
+        "tooltip_service_inactive": "No background monitoring active.\nReminders will not trigger automatically.\n\n💡 Click to sync or start the service.",
+        "title_service_status": "Reminder Service Status",
 
         "status_ready": "Ready.",
         "status_data": "Data: {filename}",
@@ -384,7 +402,7 @@ TRANSLATIONS = {
         "msg_title_required_title": "Title Required",
         "msg_title_required_body": "Please enter a title for the reminder.",
         "msg_save_success_title": "Saved Successfully",
-        "msg_save_success_body": "Reminder '{title}' has been saved.\nIt will be triggered by both the background daemon and Cron.",
+        "msg_save_success_body": "Reminder '{title}' has been saved and is active on the system.",
         "msg_save_error": "Could not save the reminder.",
         "msg_delete_confirm_title": "Confirm Deletion",
         "msg_delete_confirm_body": "Do you really want to delete '{title}'?",
@@ -441,7 +459,7 @@ TRANSLATIONS = {
         "postit_status_pinned": "Pinned above all windows",
         "postit_status_unpinned": "Desktop sticky (can go behind windows)",
         "postit_btn_alarm": "🚨 OVERLAY ALARM",
-        "postit_alarm_banner": "🚨 TIME'S UP! CHECK YOUR SCHEDULED TASKS",
+        "postit_alarm_banner": "🚨 Scheduled reminder time arrived! Check your tasks",
         "postit_alarm_status": "⏰ Reminder time has arrived!",
         "postit_alarm_notification_body": "Your scheduled reminder time has arrived!",
         "postit_press_esc": "Press Esc to close",
@@ -973,16 +991,217 @@ class UpdateManager:
             return False, f"Errore durante l'aggiornamento: {e}"
 
 
+class ToolTip:
+    """Semplice e affidabile tooltip Tkinter per visualizzare spiegazioni al passaggio del mouse."""
+    def __init__(self, widget, text=""):
+        self.widget = widget
+        self.text = text
+        self.tip_window = None
+        self.widget.bind("<Enter>", self.show_tip)
+        self.widget.bind("<Leave>", self.hide_tip)
+
+    def set_text(self, text):
+        self.text = text
+
+    def show_tip(self, event=None):
+        if self.tip_window or not self.text:
+            return
+        try:
+            x = self.widget.winfo_rootx() + 8
+            y = self.widget.winfo_rooty() + self.widget.winfo_height() + 6
+            self.tip_window = tw = tk.Toplevel(self.widget)
+            tw.wm_overrideredirect(True)
+            tw.wm_geometry(f"+{x}+{y}")
+            try:
+                tw.attributes("-topmost", True)
+            except Exception:
+                pass
+            label = tk.Label(
+                tw,
+                text=self.text,
+                justify=tk.LEFT,
+                background="#0F172A",
+                foreground="#F8FAFC",
+                relief=tk.SOLID,
+                borderwidth=1,
+                font=("Sans", 8),
+                padx=8,
+                pady=6,
+                wraplength=380
+            )
+            label.pack()
+        except Exception:
+            pass
+
+    def hide_tip(self, event=None):
+        if self.tip_window:
+            try:
+                self.tip_window.destroy()
+            except Exception:
+                pass
+            self.tip_window = None
+
+
+def render_markdown_release_notes(text_widget: tk.Text, raw_text: str, sys_font: str):
+    """Formatta e renderizza in modo professionale le note di rilascio GitHub in un widget Text.
+    Pulisce i caratteri speciali, normalizza line-breaks, converte elementi Markdown
+    (intestazioni, elenchi puntati/numerati, grassetto, corsivo, codice) e crea hyperlink cliccabili.
+    """
+    import html
+    text_widget.configure(state=tk.NORMAL)
+    text_widget.delete("1.0", tk.END)
+
+    if not raw_text or not raw_text.strip():
+        text_widget.insert(tk.END, "Nessuna nota di rilascio fornita.")
+        text_widget.configure(state=tk.DISABLED)
+        return
+
+    # Normalizzazione codifiche, ritorni a capo e caratteri speciali
+    cleaned = raw_text.replace("\r\n", "\n").replace("\r", "\n").replace("\xa0", " ")
+    cleaned = html.unescape(cleaned)
+
+    # Configurazione tag
+    f_h1 = (sys_font, 11, "bold")
+    f_h2 = (sys_font, 10, "bold")
+    f_h3 = (sys_font, 9, "bold")
+    f_body = (sys_font, 9)
+    f_bold = (sys_font, 9, "bold")
+    f_italic = (sys_font, 9, "italic")
+    f_code = ("Monospace", 8)
+    f_quote = (sys_font, 8, "italic")
+
+    text_widget.tag_configure("h1", font=f_h1, foreground="#1E3A8A", spacing1=8, spacing3=3)
+    text_widget.tag_configure("h2", font=f_h2, foreground="#1D4ED8", spacing1=6, spacing3=2)
+    text_widget.tag_configure("h3", font=f_h3, foreground="#2563EB", spacing1=5, spacing3=2)
+    text_widget.tag_configure("body", font=f_body, foreground="#334155", spacing1=1, spacing3=2)
+    text_widget.tag_configure("num_item", font=f_body, foreground="#1E293B", lmargin1=8, lmargin2=22, spacing1=3, spacing3=2)
+    text_widget.tag_configure("bullet_item", font=f_body, foreground="#334155", lmargin1=18, lmargin2=32, spacing1=2, spacing3=2)
+    text_widget.tag_configure("subbullet_item", font=f_body, foreground="#475569", lmargin1=28, lmargin2=42, spacing1=2, spacing3=2)
+    text_widget.tag_configure("quote_block", font=f_quote, foreground="#475569", background="#F8FAFC", lmargin1=20, lmargin2=20, spacing1=3, spacing3=3)
+    text_widget.tag_configure("separator", font=(sys_font, 4), foreground="#CBD5E1")
+    text_widget.tag_configure("bold", font=f_bold, foreground="#0F172A")
+    text_widget.tag_configure("italic", font=f_italic, foreground="#475569")
+    text_widget.tag_configure("code", font=f_code, background="#E2E8F0", foreground="#0F172A")
+
+    inline_re = re.compile(
+        r"(\[(?P<link_text>[^\]]+)\]\((?P<link_url>https?://[^\)]+)\))"
+        r"|(?P<raw_url>https?://[^\s<>]+)"
+        r"|(\*\*(?P<bold_text>[^*]+?)\*\*)"
+        r"|(`(?P<code_text>[^`]+?)`)"
+        r"|(\*(?P<italic_text>[^*]+?)\*)"
+        r"|(_(?P<italic_u_text>[^_]+?)_)"
+    )
+
+    link_counter = 0
+
+    def insert_inline(line_text, base_tag):
+        nonlocal link_counter
+        last_idx = 0
+        for m in inline_re.finditer(line_text):
+            start, end = m.span()
+            if start > last_idx:
+                chunk = line_text[last_idx:start]
+                text_widget.insert(tk.END, chunk, (base_tag,))
+
+            if m.group("link_text"):
+                link_counter += 1
+                ltag = f"url_link_{link_counter}"
+                url = m.group("link_url")
+                text_widget.tag_configure(ltag, font=(sys_font, 9, "underline"), foreground="#2563EB")
+                text_widget.tag_bind(ltag, "<Button-1>", lambda e, u=url: webbrowser.open(u))
+                text_widget.tag_bind(ltag, "<Enter>", lambda e: text_widget.config(cursor="hand2"))
+                text_widget.tag_bind(ltag, "<Leave>", lambda e: text_widget.config(cursor=""))
+                text_widget.insert(tk.END, m.group("link_text"), (base_tag, ltag))
+            elif m.group("raw_url"):
+                link_counter += 1
+                ltag = f"url_link_{link_counter}"
+                raw_u = m.group("raw_url")
+                clean_u = raw_u.rstrip(".,;:)\"\'")
+                punct = raw_u[len(clean_u):]
+                text_widget.tag_configure(ltag, font=(sys_font, 9, "underline"), foreground="#2563EB")
+                text_widget.tag_bind(ltag, "<Button-1>", lambda e, u=clean_u: webbrowser.open(u))
+                text_widget.tag_bind(ltag, "<Enter>", lambda e: text_widget.config(cursor="hand2"))
+                text_widget.tag_bind(ltag, "<Leave>", lambda e: text_widget.config(cursor=""))
+                text_widget.insert(tk.END, clean_u, (base_tag, ltag))
+                if punct:
+                    text_widget.insert(tk.END, punct, (base_tag,))
+            elif m.group("bold_text"):
+                text_widget.insert(tk.END, m.group("bold_text"), (base_tag, "bold"))
+            elif m.group("code_text"):
+                text_widget.insert(tk.END, f" {m.group('code_text')} ", (base_tag, "code"))
+            elif m.group("italic_text"):
+                text_widget.insert(tk.END, m.group("italic_text"), (base_tag, "italic"))
+            elif m.group("italic_u_text"):
+                text_widget.insert(tk.END, m.group("italic_u_text"), (base_tag, "italic"))
+
+            last_idx = end
+
+        if last_idx < len(line_text):
+            text_widget.insert(tk.END, line_text[last_idx:], (base_tag,))
+
+    lines = cleaned.splitlines()
+    for idx, line in enumerate(lines):
+        stripped = line.strip()
+        l_indent = len(line) - len(line.lstrip())
+
+        if not stripped:
+            text_widget.insert(tk.END, "\n", ("body",))
+            continue
+
+        if stripped in ["---", "***", "___"]:
+            text_widget.insert(tk.END, "─" * 45 + "\n", ("separator",))
+            continue
+
+        if stripped.startswith("### "):
+            text_widget.insert(tk.END, "▫ " + stripped[4:] + "\n", ("h3",))
+            continue
+        elif stripped.startswith("## "):
+            text_widget.insert(tk.END, stripped[3:] + "\n", ("h2",))
+            continue
+        elif stripped.startswith("# "):
+            text_widget.insert(tk.END, stripped[2:] + "\n", ("h1",))
+            continue
+
+        if stripped.startswith(("│", ">")):
+            quote_content = stripped.lstrip("│> ").strip()
+            insert_inline(quote_content, "quote_block")
+            text_widget.insert(tk.END, "\n", ("quote_block",))
+            continue
+
+        num_match = re.match(r"^(\d+\.)\s+(.*)", stripped)
+        if num_match:
+            num_prefix, rest = num_match.groups()
+            text_widget.insert(tk.END, f"{num_prefix} ", ("num_item", "bold"))
+            insert_inline(rest, "num_item")
+            text_widget.insert(tk.END, "\n", ("num_item",))
+            continue
+
+        bullet_match = re.match(r"^([•\*\-\+])\s+(.*)", stripped)
+        if bullet_match:
+            _, rest = bullet_match.groups()
+            tag = "subbullet_item" if l_indent >= 4 else "bullet_item"
+            bullet_sym = "▪ " if l_indent >= 4 else "• "
+            text_widget.insert(tk.END, bullet_sym, (tag, "bold"))
+            insert_inline(rest, tag)
+            text_widget.insert(tk.END, "\n", (tag,))
+            continue
+
+        insert_inline(stripped, "body")
+        text_widget.insert(tk.END, "\n", ("body",))
+
+    text_widget.configure(state=tk.DISABLED)
+
+
 def render_formatted_text(text_widget: tk.Text, raw_text: str, theme: dict):
     """Renderizza testo formattato in stile Markdown all'interno del Text widget."""
     sys_font = get_system_font_family()
     text_widget.configure(state=tk.NORMAL)
     text_widget.delete("1.0", tk.END)
 
-    f_base = font.Font(family=sys_font, size=11)
-    f_bold = font.Font(family=sys_font, size=11, weight="bold")
-    f_italic = font.Font(family=sys_font, size=11, slant="italic")
-    f_header = font.Font(family=sys_font, size=12, weight="bold")
+    f_base = font.Font(family=sys_font, size=10)
+    f_bold = font.Font(family=sys_font, size=10, weight="bold")
+    f_italic = font.Font(family=sys_font, size=10, slant="italic")
+    f_header = font.Font(family=sys_font, size=11, weight="bold")
 
     text_widget.tag_configure("base", font=f_base, foreground=theme["text"])
     text_widget.tag_configure("bold", font=f_bold, foreground=theme["title"])
@@ -1110,7 +1329,7 @@ class PostitWindow:
             text=title_text,
             bg=self.theme["header"],
             fg=self.theme["title"],
-            font=(self.sys_font, 12, "bold"),
+            font=(self.sys_font, 11, "bold"),
             anchor="w"
         )
         self.lbl_title.pack(side=tk.LEFT, fill=tk.X, expand=True)
@@ -1135,7 +1354,7 @@ class PostitWindow:
             bg=self.theme["badge_bg"],
             highlightbackground=self.theme["badge_border"],
             highlightthickness=1,
-            padx=6,
+            padx=5,
             pady=2
         )
         self.badge_frame.pack(side=tk.RIGHT, padx=(0, 4))
@@ -1145,7 +1364,7 @@ class PostitWindow:
             text=f"⏰ {time_text}",
             bg=self.theme["badge_bg"],
             fg=self.theme["badge_fg"],
-            font=(self.sys_font, 9, "bold")
+            font=(self.sys_font, 8, "bold")
         )
         self.lbl_time.pack()
 
@@ -1153,18 +1372,18 @@ class PostitWindow:
         sep.pack(fill=tk.X)
 
         # Banner Allarme
-        self.alarm_banner = tk.Frame(self.main_card, bg="#EF4444", padx=10, pady=6)
+        self.alarm_banner = tk.Frame(self.main_card, bg="#EF4444", padx=8, pady=4)
         self.lbl_alarm_banner = tk.Label(
             self.alarm_banner,
             text=t("postit_alarm_banner", self.lang),
             bg="#EF4444",
             fg="#FFFFFF",
-            font=(self.sys_font, 10, "bold")
+            font=(self.sys_font, 9, "bold")
         )
         self.lbl_alarm_banner.pack()
 
         # 2. FOOTER
-        footer_frame = tk.Frame(self.main_card, bg=self.theme["bg"], padx=16, pady=10)
+        footer_frame = tk.Frame(self.main_card, bg=self.theme["bg"], padx=14, pady=8)
         footer_frame.pack(fill=tk.X, side=tk.BOTTOM)
 
         self.status_lbl = tk.Label(
@@ -1172,7 +1391,7 @@ class PostitWindow:
             text=t("postit_press_esc", self.lang),
             bg=self.theme["bg"],
             fg="#64748B",
-            font=(self.sys_font, 9, "italic")
+            font=(self.sys_font, 8, "italic")
         )
         self.status_lbl.pack(side=tk.LEFT)
 
@@ -1183,11 +1402,11 @@ class PostitWindow:
             fg="#FFFFFF",
             activebackground="#059669",
             activeforeground="#FFFFFF",
-            font=(self.sys_font, 10, "bold"),
+            font=(self.sys_font, 9, "bold"),
             relief=tk.FLAT,
             cursor="hand2",
-            padx=14,
-            pady=6,
+            padx=12,
+            pady=4,
             command=self.close
         )
         btn_done.pack(side=tk.RIGHT)
@@ -1471,27 +1690,22 @@ class PostitManagerApp:
         hdr_right = tk.Frame(header_bar, bg="#FFFFFF")
         hdr_right.pack(side=tk.RIGHT)
 
-        self.badge_daemon = tk.Label(
+        self.badge_service = tk.Label(
             hdr_right,
-            text="● Demone: ...",
+            text="● Servizio: ...",
             font=(self.sys_font, 9, "bold"),
             bg="#F1F5F9",
             fg="#475569",
-            padx=9,
-            pady=4
+            padx=10,
+            pady=4,
+            cursor="hand2"
         )
-        self.badge_daemon.pack(side=tk.LEFT, padx=(0, 6))
+        self.badge_service.pack(side=tk.LEFT, padx=(0, 10))
+        self.tooltip_service = ToolTip(self.badge_service, "")
+        self.badge_service.bind("<Button-1>", lambda e: self.show_service_info_dialog())
 
-        self.badge_cron = tk.Label(
-            hdr_right,
-            text="● Cron: ...",
-            font=(self.sys_font, 9, "bold"),
-            bg="#F1F5F9",
-            fg="#475569",
-            padx=9,
-            pady=4
-        )
-        self.badge_cron.pack(side=tk.LEFT, padx=(0, 10))
+        self.badge_daemon = self.badge_service
+        self.badge_cron = self.badge_service
 
         # Pulsante Verifica Aggiornamenti / Notifica Release
         self.btn_check_update = tk.Button(
@@ -1977,19 +2191,76 @@ class PostitManagerApp:
         cron_avail = CronManager.is_crontab_available()
         cron_ok = CronManager.is_cron_service_active()
 
-        if daemon_ok:
-            self.badge_daemon.config(text=t("daemon_active", self.lang), bg="#DCFCE7", fg="#15803D")
-        else:
-            self.badge_daemon.config(text=t("daemon_inactive", self.lang), bg="#FEF3C7", fg="#B45309")
-
-        if cron_ok:
-            self.badge_cron.config(text=t("cron_active", self.lang), bg="#DCFCE7", fg="#15803D")
-        elif not cron_avail:
-            self.badge_cron.config(text=t("cron_not_installed_badge", self.lang), bg="#F1F5F9", fg="#64748B")
+        if daemon_ok and cron_ok:
+            badge_text = t("status_service_active_both", self.lang)
+            badge_bg = "#DCFCE7"
+            badge_fg = "#15803D"
+            tooltip_text = t("tooltip_service_both", self.lang)
         elif daemon_ok:
-            self.badge_cron.config(text=t("cron_optional_badge", self.lang), bg="#F1F5F9", fg="#64748B")
+            badge_text = t("status_service_active_systemd", self.lang)
+            badge_bg = "#DCFCE7"
+            badge_fg = "#15803D"
+            tooltip_text = t("tooltip_service_systemd", self.lang)
+        elif cron_ok:
+            badge_text = t("status_service_active_cron", self.lang)
+            badge_bg = "#DCFCE7"
+            badge_fg = "#15803D"
+            tooltip_text = t("tooltip_service_cron", self.lang)
         else:
-            self.badge_cron.config(text=t("cron_inactive", self.lang), bg="#FEE2E2", fg="#B91C1C")
+            badge_text = t("status_service_inactive", self.lang)
+            badge_bg = "#FEE2E2"
+            badge_fg = "#B91C1C"
+            tooltip_text = t("tooltip_service_inactive", self.lang)
+
+        self.badge_service.config(text=badge_text, bg=badge_bg, fg=badge_fg)
+        if hasattr(self, "tooltip_service"):
+            self.tooltip_service.set_text(tooltip_text)
+
+    def show_service_info_dialog(self):
+        """Mostra una finestra dettagliata con lo stato trasparente dei motori di notifica."""
+        daemon_ok = CronManager.is_daemon_service_active()
+        cron_avail = CronManager.is_crontab_available()
+        cron_ok = CronManager.is_cron_service_active()
+
+        if self.lang == "it":
+            title = t("title_service_status", self.lang)
+            d_status = "✓ Attivo e in esecuzione (monitora i promemoria ogni minuto)" if daemon_ok else "⚠️ Inattivo o non avviato"
+            if cron_ok:
+                c_status = "✓ Attivo e sincronizzato"
+            elif not cron_avail:
+                c_status = "○ Non installato sul sistema (non necessario, gestito dal demone)"
+            else:
+                c_status = "○ Inattivo (opzionale se il demone Systemd è attivo)"
+
+            msg = (
+                f"Stato dei servizi di notifica in background:\n\n"
+                f"• Demone Systemd (postit-daemon.service):\n  {d_status}\n\n"
+                f"• Schedulatore Crontab:\n  {c_status}\n\n"
+                f"Nota: Se il demone Systemd è attivo, i tuoi promemoria scatteranno "
+                f"sempre con precisione anche senza Crontab.\n\n"
+                f"Vuoi risincronizzare e ricaricare i servizi adesso?"
+            )
+        else:
+            title = t("title_service_status", self.lang)
+            d_status = "✓ Active and running (monitors reminders every minute)" if daemon_ok else "⚠️ Inactive or not started"
+            if cron_ok:
+                c_status = "✓ Active and synchronized"
+            elif not cron_avail:
+                c_status = "○ Not installed on system (not required, handled by daemon)"
+            else:
+                c_status = "○ Inactive (optional if Systemd daemon is active)"
+
+            msg = (
+                f"Background notification services status:\n\n"
+                f"• Systemd User Daemon (postit-daemon.service):\n  {d_status}\n\n"
+                f"• Crontab Scheduler:\n  {c_status}\n\n"
+                f"Note: If the Systemd daemon is active, your reminders will always "
+                f"trigger reliably on schedule even without Crontab.\n\n"
+                f"Do you want to re-synchronize and reload services now?"
+            )
+
+        if messagebox.askyesno(title, msg, parent=self.root):
+            self.manual_sync()
 
     def update_preset_button(self):
         """Aggiorna lo stato e il testo del pulsante Preset in base al file preset.json."""
@@ -2395,33 +2666,33 @@ class PostitManagerApp:
             dlg.geometry("640x520")
 
         # 1. Header fisso in alto
-        hdr = tk.Frame(dlg, bg="#EFF6FF", padx=20, pady=16)
+        hdr = tk.Frame(dlg, bg="#EFF6FF", padx=20, pady=14)
         hdr.pack(side=tk.TOP, fill=tk.X)
 
-        lbl_h = tk.Label(hdr, text=f"🎉 {t('msg_update_header', self.lang)}", font=(self.sys_font, 13, "bold"), bg="#EFF6FF", fg="#1D4ED8")
+        lbl_h = tk.Label(hdr, text=f"🎉 {t('msg_update_header', self.lang)}", font=(self.sys_font, 11, "bold"), bg="#EFF6FF", fg="#1D4ED8")
         lbl_h.pack(anchor="w")
 
         info_text = f"{t('msg_current_version', self.lang)} {APP_VERSION}   ➜   {t('msg_latest_version', self.lang)} {tag}"
-        lbl_v = tk.Label(hdr, text=info_text, font=(self.sys_font, 10, "bold"), bg="#EFF6FF", fg="#1E40AF")
+        lbl_v = tk.Label(hdr, text=info_text, font=(self.sys_font, 9, "bold"), bg="#EFF6FF", fg="#1E40AF")
         lbl_v.pack(anchor="w", pady=(4, 0))
 
         # 2. Barra inferiore fissa (pulsanti di azione e stato)
         # Nota: Viene impacchettata con side=BOTTOM prima del corpo centrale affinché
         # sia sempre garantita la sua visibilità e non venga mai schiacciata o nascosta.
-        b_bar = tk.Frame(dlg, bg="#FFFFFF", padx=20, pady=14)
+        b_bar = tk.Frame(dlg, bg="#FFFFFF", padx=20, pady=12)
         b_bar.pack(side=tk.BOTTOM, fill=tk.X)
 
-        lbl_progress = tk.Label(b_bar, text="", font=(self.sys_font, 9, "italic"), bg="#FFFFFF", fg="#0284C7")
-        lbl_progress.pack(anchor="w", pady=(0, 10))
+        lbl_progress = tk.Label(b_bar, text="", font=(self.sys_font, 8, "italic"), bg="#FFFFFF", fg="#0284C7")
+        lbl_progress.pack(anchor="w", pady=(0, 8))
 
         btn_row = tk.Frame(b_bar, bg="#FFFFFF")
         btn_row.pack(fill=tk.X)
 
         # 3. Area centrale espandibile con scrollbar per note di rilascio
-        body_frame = tk.Frame(dlg, bg="#FFFFFF", padx=20, pady=10)
+        body_frame = tk.Frame(dlg, bg="#FFFFFF", padx=20, pady=8)
         body_frame.pack(side=tk.TOP, fill=tk.BOTH, expand=True)
 
-        lbl_notes = tk.Label(body_frame, text=t("msg_release_notes", self.lang), font=(self.sys_font, 9, "bold"), bg="#FFFFFF", fg="#475569")
+        lbl_notes = tk.Label(body_frame, text=t("msg_release_notes", self.lang), font=(self.sys_font, 8, "bold"), bg="#FFFFFF", fg="#475569")
         lbl_notes.pack(anchor="w", pady=(0, 6))
 
         txt_container = tk.Frame(body_frame, bg="#FFFFFF")
@@ -2437,14 +2708,15 @@ class PostitManagerApp:
             relief=tk.SOLID,
             bd=1,
             wrap=tk.WORD,
+            padx=12,
+            pady=10,
             yscrollcommand=scroll_notes.set
         )
         txt_notes.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         scroll_notes.config(command=txt_notes.yview)
 
         raw_body = release_info.get("body", "").strip() or "Nuovo rilascio disponibile con ottimizzazioni e miglioramenti."
-        txt_notes.insert("1.0", raw_body)
-        txt_notes.config(state=tk.DISABLED)
+        render_markdown_release_notes(txt_notes, raw_body, self.sys_font)
 
         def do_update():
             lbl_progress.config(text=t("msg_update_in_progress", self.lang))
@@ -2492,14 +2764,14 @@ class PostitManagerApp:
         btn_upd = tk.Button(
             btn_row,
             text=t("btn_update_now", self.lang),
-            font=(self.sys_font, 10, "bold"),
+            font=(self.sys_font, 9, "bold"),
             bg="#16A34A",
             fg="#FFFFFF",
             activebackground="#15803D",
             relief=tk.FLAT,
             cursor="hand2",
-            padx=14,
-            pady=7,
+            padx=12,
+            pady=6,
             command=do_update
         )
         btn_upd.pack(side=tk.LEFT, padx=(0, 8))
@@ -2507,13 +2779,13 @@ class PostitManagerApp:
         btn_gh = tk.Button(
             btn_row,
             text=t("btn_view_github", self.lang),
-            font=(self.sys_font, 9),
+            font=(self.sys_font, 8),
             bg="#F1F5F9",
             fg="#334155",
             relief=tk.FLAT,
             cursor="hand2",
             padx=10,
-            pady=7,
+            pady=6,
             command=lambda: webbrowser.open(release_info.get("html_url", GITHUB_RELEASES_URL))
         )
         btn_gh.pack(side=tk.LEFT, padx=(0, 8))
@@ -2521,13 +2793,13 @@ class PostitManagerApp:
         btn_cancel = tk.Button(
             btn_row,
             text=t("btn_close_dialog", self.lang),
-            font=(self.sys_font, 9),
+            font=(self.sys_font, 8),
             bg="#F1F5F9",
             fg="#64748B",
             relief=tk.FLAT,
             cursor="hand2",
-            padx=12,
-            pady=7,
+            padx=10,
+            pady=6,
             command=dlg.destroy
         )
         btn_cancel.pack(side=tk.RIGHT)
