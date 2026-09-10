@@ -36,6 +36,8 @@ A differenza delle notifiche tradizionali effimere che scompaiono dopo pochi sec
   - Il pulsante in cima al modulo si trasforma in **"⚡ Carica Preset: [Nome]"** per ricompilare tutti i campi con un solo click.
   - Il preset **rimane memorizzato anche se elimini il promemoria originario** dalla lista!
   - Puoi sovrascriverlo in qualsiasi momento impostando un nuovo post-it come preset.
+- **🌐 Supporto Bilingue (Italiano / Inglese) e Auto-rilevamento**:
+  Rileva automaticamente la lingua di sistema configurata nell'ambiente desktop e adatta tutti i testi, gli avvisi, i dialoghi e i pulsanti delle note adesive. Permette inoltre di cambiare lingua a caldo tramite il selettore in alto o da riga di comando con `--lang`.
 - **🎨 Palette Temi Colore (6 Varianti Pastello)**:
   - 🟡 Giallo Classico (Default Post-it)
   - 🟢 Verde Menta
@@ -236,6 +238,9 @@ Il binario `postit-manager` (o `postit-runner.sh`) supporta vari argomenti per l
 ```bash
 # Apri l'interfaccia grafica principale
 postit-manager
+
+# Forza una lingua specifica dell'interfaccia ('it' per italiano o 'en' per inglese)
+postit-manager --lang it
 
 # Mostra il popup di allarme per uno specifico promemoria
 postit-manager --popup --alarm --id <ID_PROMEMORIA>

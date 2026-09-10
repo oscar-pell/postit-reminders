@@ -36,6 +36,8 @@ Unlike traditional ephemeral desktop notifications that fade away after a few se
   - The button at the top of the form turns into **"⚡ Load Preset: [Name]"** to re-populate the form in a single click.
   - The preset **persists even if you delete the original reminder** from your list!
   - You can overwrite it at any time by setting a new post-it as preset.
+- **🌐 Bilingual UI & System Locale Detection**:
+  Automatically detects your desktop environment language (`it` or `en`) and adapts all UI text, sticky notes, notifications, and dialogs. Allows live runtime language switching from the top header bar or via the `--lang` flag.
 - **🎨 Color Theme Palettes (6 Pastel Options)**:
   - 🟡 Classic Yellow (Default Post-it)
   - 🟢 Mint Green
@@ -235,6 +237,9 @@ The `postit-manager` binary supports headless flags for scripting and DevOps aut
 ```bash
 # Open main GUI configuration window
 postit-manager
+
+# Force specific interface language ('en' for English or 'it' for Italian)
+postit-manager --lang en
 
 # Trigger forced alarm popup for a specific reminder ID
 postit-manager --popup --alarm --id <REMINDER_ID>

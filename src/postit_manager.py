@@ -4,12 +4,14 @@ Post-it Reminders Manager (Gestore Promemoria Desktop Avanzato)
 Desktop utility universale per Linux (Ubuntu, Debian, Fedora, Arch, openSUSE, ecc.)
 per la gestione di promemoria stile Post-it con finestre Always-on-Top, modalità
 Post-it Desktop adesiva, richiamo orario automatico, palette colori personalizzabile,
-formattazione testo ricca, Preset Rapido configurabile e doppio scheduler (Systemd + Cron).
+formattazione testo ricca, Preset Rapido configurabile, supporto bilingue (Italiano/Inglese)
+con auto-rilevamento della lingua di sistema e doppio scheduler (Systemd + Cron).
 """
 
 import argparse
 from datetime import datetime
 import json
+import locale
 import os
 import re
 import shutil
@@ -31,6 +33,7 @@ RUN_DIR.mkdir(parents=True, exist_ok=True)
 
 REMINDERS_FILE = APP_DIR / "reminders.json"
 PRESET_FILE = APP_DIR / "preset.json"
+CONFIG_FILE = APP_DIR / "config.json"
 ICON_SVG = APP_DIR / "icon.svg"
 ICON_PNG = APP_DIR / "icon.png"
 RUNNER_SH = USER_HOME / ".local" / "bin" / "postit-runner.sh"
@@ -41,10 +44,12 @@ CRON_MARKER = "# POSTIT_APP_JOB"
 CRON_BLOCK_START = "# === BEGIN POSTIT_APP_JOBS (Generato da Post-it Manager - NON MODIFICARE MANUALMENTE) ==="
 CRON_BLOCK_END = "# === END POSTIT_APP_JOBS ==="
 
-# Palette Temi Colore Post-it
+# Palette Temi Colore Post-it con etichette bilingue
 COLOR_THEMES = {
     "yellow": {
         "name": "Giallo Classico",
+        "name_it": "Giallo Classico",
+        "name_en": "Classic Yellow",
         "bg": "#FEF9C3",
         "header": "#FDE047",
         "border": "#EAB308",
@@ -58,6 +63,8 @@ COLOR_THEMES = {
     },
     "green": {
         "name": "Verde Menta",
+        "name_it": "Verde Menta",
+        "name_en": "Mint Green",
         "bg": "#DCFCE7",
         "header": "#86EFAC",
         "border": "#22C55E",
@@ -71,6 +78,8 @@ COLOR_THEMES = {
     },
     "blue": {
         "name": "Azzurro Cielo",
+        "name_it": "Azzurro Cielo",
+        "name_en": "Sky Blue",
         "bg": "#E0F2FE",
         "header": "#7DD3FC",
         "border": "#0EA5E9",
@@ -84,6 +93,8 @@ COLOR_THEMES = {
     },
     "purple": {
         "name": "Lilla Lavanda",
+        "name_it": "Lilla Lavanda",
+        "name_en": "Lavender Purple",
         "bg": "#F3E8FF",
         "header": "#D8B4FE",
         "border": "#A855F7",
@@ -97,6 +108,8 @@ COLOR_THEMES = {
     },
     "orange": {
         "name": "Arancio Pesca",
+        "name_it": "Arancio Pesca",
+        "name_en": "Peach Orange",
         "bg": "#FFEDD5",
         "header": "#FDBA74",
         "border": "#F97316",
@@ -110,6 +123,8 @@ COLOR_THEMES = {
     },
     "pink": {
         "name": "Rosa Pastello",
+        "name_it": "Rosa Pastello",
+        "name_en": "Pastel Pink",
         "bg": "#FCE7F3",
         "header": "#F9A8D4",
         "border": "#EC4899",
@@ -123,17 +138,341 @@ COLOR_THEMES = {
     }
 }
 
-# Promemoria generico di benvenuto (nessun dato sensibile o personale)
-DEFAULT_WELCOME_REMINDER = {
-    "id": "benvenuto-01",
-    "time": "18:00",
-    "frequency": "Lun-Ven (Giorni feriali)",
-    "title": "Benvenuto in Post-it Reminders!",
-    "text": "**Questo è il tuo primo post-it:**\n• Modifica orario, frequenza e colori a tuo piacimento.\n• Inserisci collegamenti rapidi ai tuoi siti preferiti.\n• Clicca su **⭐ Salva come Preset** per memorizzare il tuo template personale e riutilizzarlo con un click!",
-    "color": "yellow",
-    "links": [],
-    "enabled": True
+
+def get_color_name(color_key: str, lang: str = "it") -> str:
+    """Restituisce il nome del colore localizzato nella lingua richiesta."""
+    theme = COLOR_THEMES.get(color_key, COLOR_THEMES.get("yellow", {}))
+    return theme.get(f"name_{lang}", theme.get("name", color_key))
+
+
+# Dizionario di internazionalizzazione completo (Italiano / Inglese)
+TRANSLATIONS = {
+    "it": {
+        "app_window_title": "Promemoria Post-it - Gestore Desktop",
+        "app_title": "Promemoria Post-it",
+        "app_subtitle": "Post-it Desktop interattivi, promemoria in sovraimpressione e collegamenti rapidi",
+        "language_label": "Lingua:",
+
+        "daemon_active": "● Demone: ATTIVO",
+        "daemon_inactive": "⚠️ Demone: INATTIVO",
+        "cron_active": "● Cron: ATTIVO",
+        "cron_inactive": "⚠️ Cron: INATTIVO",
+
+        "status_ready": "Pronto.",
+        "status_data": "Dati: {filename}",
+
+        "form_section_title": "Crea o Modifica Post-it",
+        "btn_preset_format": "⚡ Carica Preset: {title} ({time})",
+        "btn_preset_empty": "⚡ Preset Rapido: (Nessun preset memorizzato - clicca qui)",
+        "lbl_bg_color": "Colore Sfondo Post-it:",
+        "lbl_time": "Orario (HH:MM):",
+        "lbl_freq": "Frequenza:",
+        "freq_weekdays": "Lun-Ven (Giorni feriali)",
+        "freq_daily": "Ogni Giorno",
+        "freq_short_weekdays": "Lun-Ven",
+        "freq_short_daily": "Tutti i gg",
+        "lbl_title": "Titolo:",
+        "default_title": "Chiusura Attività",
+        "lbl_formatting": "Testo Messaggio (Formattazione):",
+        "btn_bold": "G",
+        "btn_italic": "C",
+        "btn_underline": "S",
+        "btn_highlight": "🟡 Evidenzia",
+        "btn_bullet": "• Elenco",
+        "btn_heading": "Titolo H3",
+        "btn_clean": "🧹 Pulisci",
+        "default_message_text": "Ricordati di aggiornare le tue attività prima di staccare.",
+        "lbl_links": "Collegamenti Rapidi (Opzionali):",
+        "link1_default_label": "Link 1",
+        "link2_default_label": "Link 2",
+        "btn_save_reminder": "💾 Salva Promemoria",
+        "btn_update_reminder": "💾 Aggiorna Modifiche",
+        "btn_save_as_preset": "⭐ Salva come Preset",
+        "btn_clear": "Pulisci",
+
+        "table_section_title": "Elenco Promemoria",
+        "table_active_count": "Promemoria Attivi ({count})",
+        "table_double_click_hint": "💡 Doppio click per mettere sul desktop",
+        "col_time": "Orario",
+        "col_freq": "Frequenza",
+        "col_color": "Colore",
+        "col_title": "Titolo",
+        "col_links": "Link",
+        "links_count": "{count} link",
+        "no_links": "—",
+
+        "btn_desktop": "📌 Metti sul Desktop",
+        "btn_test_alarm": "👁️ Testa Allarme Ora",
+        "btn_set_as_preset": "⭐ Imposta come Preset",
+        "btn_delete": "🗑️ Elimina",
+        "btn_sync": "🔄 Sincronizza",
+
+        "msg_no_preset_title": "Nessun Preset Memorizzato",
+        "msg_no_preset_body": "Non hai ancora memorizzato un Preset Rapido.\n\nCome creare il tuo Preset:\n1. Compila i campi del modulo oppure seleziona un promemoria dalla tabella.\n2. Clicca sul pulsante '⭐ Salva come Preset'.\n\nI tuoi dati verranno memorizzati nel tuo profilo locale e potrai riutilizzarli al volo in qualsiasi momento!",
+        "msg_missing_title_title": "Titolo Mancante",
+        "msg_missing_title_body": "Inserisci almeno un titolo prima di salvare il Preset.",
+        "msg_preset_saved_title": "Preset Memorizzato",
+        "msg_preset_saved_body": "Il promemoria '{title}' è stato memorizzato come Preset Rapido!\n\n• Rimarrà salvato nel tuo sistema anche se elimini questo promemoria dalla tabella.\n• Potrai ricompilarlo all'istante ogni volta che vorrai cliccando su 'Carica Preset'.",
+        "msg_preset_row_saved_body": "Il promemoria '{title}' è stato memorizzato come Preset Rapido!\n\n• Rimarrà salvato nel tuo sistema anche se elimini questo promemoria dalla tabella.\n• Se in futuro imposti un altro promemoria come preset, sovrascriverà questi dati.",
+        "msg_preset_save_error": "Impossibile salvare il Preset.",
+        "msg_no_selection_title": "Nessuna selezione",
+        "msg_no_selection_preset": "Seleziona un promemoria dalla tabella da impostare come Preset.",
+        "msg_no_selection_delete": "Seleziona un promemoria da eliminare.",
+        "msg_invalid_time_title": "Orario non valido",
+        "msg_invalid_time_body": "Inserisci un orario valido nel formato HH:MM (es. 18:00).",
+        "msg_title_required_title": "Titolo obbligatorio",
+        "msg_title_required_body": "Inserisci un titolo per il promemoria.",
+        "msg_save_success_title": "Salvataggio Completato",
+        "msg_save_success_body": "Il promemoria '{title}' è stato salvato.\nSarà attivato sia dal demone di sistema sia da Cron.",
+        "msg_save_error": "Impossibile salvare il promemoria.",
+        "msg_delete_confirm_title": "Conferma eliminazione",
+        "msg_delete_confirm_body": "Vuoi davvero eliminare '{title}'?",
+        "msg_delete_error": "Impossibile eliminare il promemoria.",
+        "msg_launch_error_title": "Errore Avvio",
+        "msg_launch_error_body": "Impossibile avviare il Post-it sul desktop: {error}",
+        "msg_sync_title": "Sincronizzazione",
+        "msg_error_title": "Errore",
+        "cron_sync_success": "Crontab sincronizzato con successo ({count} job attivi).",
+        "cron_sync_error": "Errore nell'aggiornamento crontab: {error}",
+        "cron_generic_error": "Errore generico crontab: {error}",
+
+        "status_preset_loaded": "✓ Preset '{title}' caricato nel modulo.",
+        "status_preset_stored": "⭐ Preset '{title}' memorizzato con successo!",
+        "status_form_cleared": "Modulo ripulito.",
+        "status_reminder_loaded": "Caricato promemoria: '{title}'",
+        "status_reminder_saved": "✓ Promemoria '{title}' salvato!",
+        "status_reminder_deleted": "Promemoria eliminato.",
+        "status_desktop_launched": "📌 Post-it posizionato sul desktop (processo indipendente).",
+        "status_alarm_tested": "🚨 Test sovraimpressione allarme inviato a schermo!",
+
+        "postit_default_title": "Promemoria",
+        "postit_pin_on": "📌 In Primo Piano",
+        "postit_pin_off": "🔓 Normale (Desktop)",
+        "postit_status_pinned": "Fissato sopra tutte le finestre",
+        "postit_status_unpinned": "Libero (può andare sotto le finestre)",
+        "postit_btn_alarm": "🚨 SOVRAIMPRESSIONE",
+        "postit_alarm_banner": "🚨 È ARRIVATO L'ORARIO STABILITO! CONTROLLA I TUOI COMPITI",
+        "postit_alarm_status": "⏰ È scattato l'orario del promemoria!",
+        "postit_alarm_notification_body": "È arrivato l'orario stabilito!",
+        "postit_press_esc": "Premi Esc per chiudere",
+        "postit_btn_done": "✓ Ho Fatto / Chiudi",
+        "postit_lbl_links": "Collegamenti Rapidi:",
+        "postit_default_link_label": "Apri Collegamento",
+        "postit_url_opened": "✓ Apertura '{label}' nel browser completata!",
+        "postit_no_message": "Nessun messaggio."
+    },
+    "en": {
+        "app_window_title": "Post-it Reminders - Desktop Manager",
+        "app_title": "Post-it Reminders",
+        "app_subtitle": "Interactive desktop sticky notes, overlay alarms, and quick action links",
+        "language_label": "Language:",
+
+        "daemon_active": "● Daemon: ACTIVE",
+        "daemon_inactive": "⚠️ Daemon: INACTIVE",
+        "cron_active": "● Cron: ACTIVE",
+        "cron_inactive": "⚠️ Cron: INACTIVE",
+
+        "status_ready": "Ready.",
+        "status_data": "Data: {filename}",
+
+        "form_section_title": "Create or Edit Post-it",
+        "btn_preset_format": "⚡ Load Preset: {title} ({time})",
+        "btn_preset_empty": "⚡ Quick Preset: (No preset stored - click for info)",
+        "lbl_bg_color": "Post-it Background Color:",
+        "lbl_time": "Time (HH:MM):",
+        "lbl_freq": "Frequency:",
+        "freq_weekdays": "Mon-Fri (Weekdays)",
+        "freq_daily": "Every Day",
+        "freq_short_weekdays": "Mon-Fri",
+        "freq_short_daily": "Daily",
+        "lbl_title": "Title:",
+        "default_title": "Wrap-up Tasks",
+        "lbl_formatting": "Message Body (Formatting):",
+        "btn_bold": "B",
+        "btn_italic": "I",
+        "btn_underline": "U",
+        "btn_highlight": "🟡 Highlight",
+        "btn_bullet": "• Bullet",
+        "btn_heading": "Heading H3",
+        "btn_clean": "🧹 Clean",
+        "default_message_text": "Remember to update your tasks before clocking out.",
+        "lbl_links": "Quick Action Links (Optional):",
+        "link1_default_label": "Link 1",
+        "link2_default_label": "Link 2",
+        "btn_save_reminder": "💾 Save Reminder",
+        "btn_update_reminder": "💾 Update Changes",
+        "btn_save_as_preset": "⭐ Save as Preset",
+        "btn_clear": "Clear",
+
+        "table_section_title": "Reminders List",
+        "table_active_count": "Active Reminders ({count})",
+        "table_double_click_hint": "💡 Double-click to pin on desktop",
+        "col_time": "Time",
+        "col_freq": "Frequency",
+        "col_color": "Color",
+        "col_title": "Title",
+        "col_links": "Links",
+        "links_count": "{count} links",
+        "no_links": "—",
+
+        "btn_desktop": "📌 Put on Desktop",
+        "btn_test_alarm": "👁️ Test Alarm Now",
+        "btn_set_as_preset": "⭐ Set as Preset",
+        "btn_delete": "🗑️ Delete",
+        "btn_sync": "🔄 Synchronize",
+
+        "msg_no_preset_title": "No Preset Stored",
+        "msg_no_preset_body": "You haven't stored a Quick Preset yet.\n\nHow to create your Preset:\n1. Fill out the form or select a reminder from the table.\n2. Click the '⭐ Save as Preset' button.\n\nYour data will be stored locally in your profile and can be reloaded anytime with a single click!",
+        "msg_missing_title_title": "Missing Title",
+        "msg_missing_title_body": "Please enter at least a title before saving the Preset.",
+        "msg_preset_saved_title": "Preset Saved",
+        "msg_preset_saved_body": "Reminder '{title}' has been saved as your Quick Preset!\n\n• It persists on your system even if you delete this reminder from the table.\n• You can instantly autofill it anytime by clicking 'Load Preset'.",
+        "msg_preset_row_saved_body": "Reminder '{title}' has been saved as your Quick Preset!\n\n• It persists on your system even if you delete this reminder from the table.\n• Setting another reminder as preset in the future will overwrite these values.",
+        "msg_preset_save_error": "Could not save Preset.",
+        "msg_no_selection_title": "No Selection",
+        "msg_no_selection_preset": "Select a reminder from the table to set as Preset.",
+        "msg_no_selection_delete": "Select a reminder to delete.",
+        "msg_invalid_time_title": "Invalid Time",
+        "msg_invalid_time_body": "Please enter a valid time in HH:MM format (e.g. 18:00).",
+        "msg_title_required_title": "Title Required",
+        "msg_title_required_body": "Please enter a title for the reminder.",
+        "msg_save_success_title": "Saved Successfully",
+        "msg_save_success_body": "Reminder '{title}' has been saved.\nIt will be triggered by both the background daemon and Cron.",
+        "msg_save_error": "Could not save the reminder.",
+        "msg_delete_confirm_title": "Confirm Deletion",
+        "msg_delete_confirm_body": "Do you really want to delete '{title}'?",
+        "msg_delete_error": "Could not delete reminder.",
+        "msg_launch_error_title": "Launch Error",
+        "msg_launch_error_body": "Could not launch sticky note on desktop: {error}",
+        "msg_sync_title": "Synchronization",
+        "msg_error_title": "Error",
+        "cron_sync_success": "Crontab synchronized successfully ({count} active jobs).",
+        "cron_sync_error": "Error updating crontab: {error}",
+        "cron_generic_error": "Generic crontab error: {error}",
+
+        "status_preset_loaded": "✓ Preset '{title}' loaded into form.",
+        "status_preset_stored": "⭐ Preset '{title}' saved successfully!",
+        "status_form_cleared": "Form cleared.",
+        "status_reminder_loaded": "Loaded reminder: '{title}'",
+        "status_reminder_saved": "✓ Reminder '{title}' saved!",
+        "status_reminder_deleted": "Reminder deleted.",
+        "status_desktop_launched": "📌 Sticky note placed on desktop (independent process).",
+        "status_alarm_tested": "🚨 Alarm overlay test sent to screen!",
+
+        "postit_default_title": "Reminder",
+        "postit_pin_on": "📌 Always on Top",
+        "postit_pin_off": "🔓 Normal (Desktop)",
+        "postit_status_pinned": "Pinned above all windows",
+        "postit_status_unpinned": "Desktop sticky (can go behind windows)",
+        "postit_btn_alarm": "🚨 OVERLAY ALARM",
+        "postit_alarm_banner": "🚨 TIME'S UP! CHECK YOUR SCHEDULED TASKS",
+        "postit_alarm_status": "⏰ Reminder time has arrived!",
+        "postit_alarm_notification_body": "Your scheduled reminder time has arrived!",
+        "postit_press_esc": "Press Esc to close",
+        "postit_btn_done": "✓ Done / Close",
+        "postit_lbl_links": "Quick Action Links:",
+        "postit_default_link_label": "Open Link",
+        "postit_url_opened": "✓ Opened '{label}' in browser!",
+        "postit_no_message": "No message."
+    }
 }
+
+
+def get_system_language() -> str:
+    """Rileva la lingua di sistema preferita ('it' o 'en')."""
+    for var in ("LC_ALL", "LC_MESSAGES", "LANG"):
+        val = os.environ.get(var, "")
+        if val:
+            val_clean = val.split(".")[0].lower()
+            if val_clean.startswith("it"):
+                return "it"
+            if val_clean.startswith("en"):
+                return "en"
+    try:
+        loc = locale.getdefaultlocale()[0]
+        if loc and loc.lower().startswith("it"):
+            return "it"
+    except Exception:
+        pass
+    return "en"
+
+
+class ConfigStore:
+    """Gestione configurazioni persistenti dell'applicazione (lingua, preferenze)."""
+
+    @staticmethod
+    def load() -> dict:
+        if CONFIG_FILE.exists():
+            try:
+                with open(CONFIG_FILE, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                    if isinstance(data, dict):
+                        return data
+            except Exception:
+                pass
+        return {}
+
+    @staticmethod
+    def get_language() -> str:
+        cfg = ConfigStore.load()
+        lang = cfg.get("language")
+        if lang in ("it", "en"):
+            return lang
+        return get_system_language()
+
+    @staticmethod
+    def set_language(lang: str) -> bool:
+        if lang not in ("it", "en"):
+            return False
+        cfg = ConfigStore.load()
+        cfg["language"] = lang
+        APP_DIR.mkdir(parents=True, exist_ok=True)
+        try:
+            with open(CONFIG_FILE, "w", encoding="utf-8") as f:
+                json.dump(cfg, f, indent=2, ensure_ascii=False)
+            return True
+        except Exception:
+            return False
+
+
+def t(key: str, lang: str = None, **kwargs) -> str:
+    """Funzione helper di traduzione con interpolazione di parametri e fallback."""
+    if not lang:
+        lang = ConfigStore.get_language()
+    dict_lang = TRANSLATIONS.get(lang, TRANSLATIONS["en"])
+    text = dict_lang.get(key, TRANSLATIONS["en"].get(key, key))
+    if kwargs:
+        try:
+            return text.format(**kwargs)
+        except Exception:
+            return text
+    return text
+
+
+# Promemoria generici di benvenuto per prima installazione
+DEFAULT_WELCOME_REMINDERS = {
+    "it": {
+        "id": "benvenuto-01",
+        "time": "18:00",
+        "frequency": "Lun-Ven (Giorni feriali)",
+        "title": "Benvenuto in Post-it Reminders!",
+        "text": "**Questo è il tuo primo post-it:**\n• Modifica orario, frequenza e colori a tuo piacimento.\n• Inserisci collegamenti rapidi ai tuoi siti preferiti.\n• Clicca su **⭐ Salva come Preset** per memorizzare il tuo template personale e riutilizzarlo con un click!",
+        "color": "yellow",
+        "links": [],
+        "enabled": True
+    },
+    "en": {
+        "id": "benvenuto-01",
+        "time": "18:00",
+        "frequency": "Mon-Fri (Weekdays)",
+        "title": "Welcome to Post-it Reminders!",
+        "text": "**This is your first sticky note:**\n• Customize time, frequency, and colors as you like.\n• Add quick action links to your favorite tools.\n• Click **⭐ Save as Preset** to store your personal template and reuse it anytime!",
+        "color": "yellow",
+        "links": [],
+        "enabled": True
+    }
+}
+DEFAULT_WELCOME_REMINDER = DEFAULT_WELCOME_REMINDERS["it"]
 
 
 class PresetStore:
@@ -210,13 +549,15 @@ def apply_app_icon(window):
             pass
 
 
-def send_system_notification(title: str, message: str, urgency: str = "critical"):
+def send_system_notification(title: str, message: str, urgency: str = "critical", app_name: str = None):
     """Invia una notifica di sistema desktop cross-desktop tramite libnotify / notify-send."""
     icon_name = "postit-manager"
     clean_msg = re.sub(r"(\*\*|\*|__|\=\=|###\s*)", "", message)
+    if not app_name:
+        app_name = t("app_title")
     try:
         subprocess.Popen(
-            ["notify-send", "-u", urgency, "-i", icon_name, "-a", "Promemoria Post-it", title, clean_msg],
+            ["notify-send", "-u", urgency, "-i", icon_name, "-a", app_name, title, clean_msg],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL
         )
@@ -248,7 +589,9 @@ class ReminderStore:
     def ensure_storage():
         APP_DIR.mkdir(parents=True, exist_ok=True)
         if not REMINDERS_FILE.exists():
-            ReminderStore.save_all([DEFAULT_WELCOME_REMINDER])
+            lang = ConfigStore.get_language()
+            welcome = DEFAULT_WELCOME_REMINDERS.get(lang, DEFAULT_WELCOME_REMINDERS["en"])
+            ReminderStore.save_all([welcome])
 
     @staticmethod
     def load_all() -> list:
@@ -342,7 +685,10 @@ class CronManager:
         return ""
 
     @staticmethod
-    def sync_reminders(reminders: list) -> tuple[bool, str]:
+    def sync_reminders(reminders: list, lang: str = None) -> tuple[bool, str]:
+        if not lang:
+            lang = ConfigStore.get_language()
+
         current_crontab = CronManager.get_current_crontab()
         lines = current_crontab.splitlines()
 
@@ -371,7 +717,7 @@ class CronManager:
             hour, minute = int(match.group(1)), int(match.group(2))
 
             freq = rem.get("frequency", "Lun-Ven (Giorni feriali)")
-            dow = "1-5" if "Lun-Ven" in freq else "*"
+            dow = "1-5" if any(k in freq for k in ["Lun-Ven", "Mon-Fri", "feriali", "Weekdays"]) else "*"
 
             cmd = f"{runner_path} --popup --alarm --id {rem['id']}"
             job_line = f"{minute} {hour} * * {dow} {cmd} {CRON_MARKER}"
@@ -397,12 +743,12 @@ class CronManager:
                     text=True,
                     check=True
                 )
-            return True, f"Crontab sincronizzato con successo ({len(new_cron_jobs)} job attivi)."
+            return True, t("cron_sync_success", lang, count=len(new_cron_jobs))
         except subprocess.CalledProcessError as e:
             err = e.stderr.strip() or str(e)
-            return False, f"Errore nell'aggiornamento crontab: {err}"
+            return False, t("cron_sync_error", lang, error=err)
         except Exception as e:
-            return False, f"Errore generico crontab: {e}"
+            return False, t("cron_generic_error", lang, error=str(e))
 
 
 def render_formatted_text(text_widget: tk.Text, raw_text: str, theme: dict):
@@ -465,13 +811,14 @@ def render_formatted_text(text_widget: tk.Text, raw_text: str, theme: dict):
 
 
 class PostitWindow:
-    """Finestra Post-it autonoma con pulsanti d'azione sempre visibili e auto-sovraimpressione."""
+    """Finestra Post-it autonoma con pulsanti d'azione sempre visibili, bilingue e auto-sovraimpressione."""
 
-    def __init__(self, reminder: dict, is_alarm_mode: bool = False, parent=None):
+    def __init__(self, reminder: dict, is_alarm_mode: bool = False, parent=None, lang: str = None):
         self.reminder = reminder
         self.is_alarm = is_alarm_mode
         self.parent = parent
         self.is_toplevel = parent is not None
+        self.lang = lang or ConfigStore.get_language()
 
         self.lock_file = RUN_DIR / f"window_{self.reminder.get('id', 'default')}.active"
         try:
@@ -499,7 +846,7 @@ class PostitWindow:
             self._apply_pin_state()
 
     def _setup_window(self):
-        title = self.reminder.get("title", "Post-it")
+        title = self.reminder.get("title", t("postit_default_title", self.lang))
         self.root.title(f"📌 {title}")
         self.root.geometry("480x440")
         self.root.minsize(440, 380)
@@ -535,7 +882,7 @@ class PostitWindow:
         self.lbl_pin_icon = tk.Label(top_row, text="📌", bg=self.theme["header"], font=("Sans", 14))
         self.lbl_pin_icon.pack(side=tk.LEFT, padx=(0, 6))
 
-        title_text = self.reminder.get("title", "Promemoria")
+        title_text = self.reminder.get("title", t("postit_default_title", self.lang))
         self.lbl_title = tk.Label(
             top_row,
             text=title_text,
@@ -548,7 +895,7 @@ class PostitWindow:
 
         self.btn_pin = tk.Button(
             top_row,
-            text="📌 In Primo Piano" if self.is_pinned else "🔓 Normale (Desktop)",
+            text=t("postit_pin_on", self.lang) if self.is_pinned else t("postit_pin_off", self.lang),
             font=(self.sys_font, 8, "bold"),
             bg="#FFFFFF",
             fg=self.theme["title"],
@@ -587,7 +934,7 @@ class PostitWindow:
         self.alarm_banner = tk.Frame(self.main_card, bg="#EF4444", padx=10, pady=6)
         self.lbl_alarm_banner = tk.Label(
             self.alarm_banner,
-            text="🚨 È ARRIVATO L'ORARIO STABILITO! CONTROLLA I TUOI COMPITI",
+            text=t("postit_alarm_banner", self.lang),
             bg="#EF4444",
             fg="#FFFFFF",
             font=(self.sys_font, 10, "bold")
@@ -600,7 +947,7 @@ class PostitWindow:
 
         self.status_lbl = tk.Label(
             footer_frame,
-            text="Premi Esc per chiudere",
+            text=t("postit_press_esc", self.lang),
             bg=self.theme["bg"],
             fg="#64748B",
             font=(self.sys_font, 9, "italic")
@@ -609,7 +956,7 @@ class PostitWindow:
 
         btn_done = tk.Button(
             footer_frame,
-            text="✓ Ho Fatto / Chiudi",
+            text=t("postit_btn_done", self.lang),
             bg="#10B981",
             fg="#FFFFFF",
             activebackground="#059669",
@@ -633,7 +980,7 @@ class PostitWindow:
 
             lbl_actions = tk.Label(
                 self.links_frame,
-                text="Collegamenti Rapidi:",
+                text=t("postit_lbl_links", self.lang),
                 bg=self.theme["bg"],
                 fg="#334155",
                 font=(self.sys_font, 9, "bold"),
@@ -642,7 +989,7 @@ class PostitWindow:
             lbl_actions.pack(fill=tk.X, pady=(0, 6))
 
             for link in valid_links:
-                label_txt = link.get("label", "").strip() or "Apri Collegamento"
+                label_txt = link.get("label", "").strip() or t("postit_default_link_label", self.lang)
                 url_target = link.get("url", "").strip()
 
                 btn_link = tk.Button(
@@ -683,7 +1030,7 @@ class PostitWindow:
         txt_scroll.pack(side=tk.RIGHT, fill=tk.Y)
         self.txt_display.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
 
-        raw_text = self.reminder.get("text", "Nessun messaggio.")
+        raw_text = self.reminder.get("text", t("postit_no_message", self.lang))
         render_formatted_text(self.txt_display, raw_text, self.theme)
 
     def toggle_pin(self):
@@ -696,11 +1043,11 @@ class PostitWindow:
         except Exception:
             pass
         if self.is_pinned:
-            self.btn_pin.config(text="📌 In Primo Piano", bg="#FDE047", fg="#78350F")
-            self.status_lbl.config(text="Fissato sopra tutte le finestre")
+            self.btn_pin.config(text=t("postit_pin_on", self.lang), bg="#FDE047", fg="#78350F")
+            self.status_lbl.config(text=t("postit_status_pinned", self.lang))
         else:
-            self.btn_pin.config(text="🔓 Normale (Desktop)", bg="#FFFFFF", fg="#475569")
-            self.status_lbl.config(text="Libero (può andare sotto le finestre)")
+            self.btn_pin.config(text=t("postit_pin_off", self.lang), bg="#FFFFFF", fg="#475569")
+            self.status_lbl.config(text=t("postit_status_unpinned", self.lang))
 
     def trigger_alarm_mode(self):
         self.is_pinned = True
@@ -713,14 +1060,15 @@ class PostitWindow:
         except Exception:
             pass
 
-        self.btn_pin.config(text="🚨 SOVRAIMPRESSIONE", bg="#EF4444", fg="#FFFFFF")
+        self.btn_pin.config(text=t("postit_btn_alarm", self.lang), bg="#EF4444", fg="#FFFFFF")
         self.alarm_banner.pack(fill=tk.X, after=self.header_frame)
-        self.status_lbl.config(text="⏰ È scattato l'orario del promemoria!", fg="#DC2626")
+        self.status_lbl.config(text=t("postit_alarm_status", self.lang), fg="#DC2626")
 
         send_system_notification(
-            title=f"📌 {self.reminder.get('title', 'Promemoria')}",
-            message=self.reminder.get("text", "È arrivato l'orario stabilito!"),
-            urgency="critical"
+            title=f"📌 {self.reminder.get('title', t('postit_default_title', self.lang))}",
+            message=self.reminder.get("text", t("postit_alarm_notification_body", self.lang)),
+            urgency="critical",
+            app_name=t("app_title", self.lang)
         )
         self._flash_alarm(5)
 
@@ -750,16 +1098,15 @@ class PostitWindow:
         now_time = now.strftime("%H:%M")
         weekday = now.weekday()
 
-        is_day_valid = True
-        if "Lun-Ven" in freq and weekday >= 5:
-            is_day_valid = False
+        is_weekdays = any(k in freq for k in ["Lun-Ven", "Mon-Fri", "feriali", "Weekdays"])
+        is_day_valid = not (is_weekdays and weekday >= 5)
 
         if is_day_valid and now_time == time_target:
             self.trigger_alarm_mode()
 
     def _handle_click_url(self, url: str, label: str):
         open_url(url)
-        self.status_lbl.config(text=f"✓ Apertura '{label}' nel browser completata!", fg="#2563EB")
+        self.status_lbl.config(text=t("postit_url_opened", self.lang, label=label), fg="#2563EB")
 
     def close(self):
         try:
@@ -780,14 +1127,16 @@ class PostitWindow:
 
 
 class PostitManagerApp:
-    """Finestra principale di gestione e configurazione promemoria con Preset dinamico."""
+    """Finestra principale di gestione e configurazione promemoria con supporto bilingue e Preset dinamico."""
 
     def __init__(self, root: tk.Tk):
         self.root = root
         self.sys_font = get_system_font_family()
-        self.root.title("Promemoria Post-it - Gestore Desktop")
-        self.root.geometry("960x720")
-        self.root.minsize(900, 650)
+        self.lang = ConfigStore.get_language()
+
+        self.root.title(t("app_window_title", self.lang))
+        self.root.geometry("980x730")
+        self.root.minsize(920, 660)
 
         apply_app_icon(self.root)
 
@@ -846,29 +1195,29 @@ class PostitManagerApp:
         title_box = tk.Frame(hdr_left, bg="#FFFFFF")
         title_box.pack(side=tk.LEFT)
 
-        lbl_app_title = tk.Label(
+        self.lbl_app_title = tk.Label(
             title_box,
-            text="Promemoria Post-it",
+            text=t("app_title", self.lang),
             font=(self.sys_font, 15, "bold"),
             bg="#FFFFFF",
             fg=self.color_text
         )
-        lbl_app_title.pack(anchor="w")
+        self.lbl_app_title.pack(anchor="w")
 
-        lbl_app_sub = tk.Label(
+        self.lbl_app_sub = tk.Label(
             title_box,
-            text="Post-it Desktop interattivi, promemoria in sovraimpressione e collegamenti rapidi",
+            text=t("app_subtitle", self.lang),
             font=(self.sys_font, 9),
             bg="#FFFFFF",
             fg=self.color_muted
         )
-        lbl_app_sub.pack(anchor="w")
+        self.lbl_app_sub.pack(anchor="w")
 
-        badge_box = tk.Frame(header_bar, bg="#FFFFFF")
-        badge_box.pack(side=tk.RIGHT)
+        hdr_right = tk.Frame(header_bar, bg="#FFFFFF")
+        hdr_right.pack(side=tk.RIGHT)
 
         self.badge_daemon = tk.Label(
-            badge_box,
+            hdr_right,
             text="● Demone: ...",
             font=(self.sys_font, 9, "bold"),
             bg="#F1F5F9",
@@ -879,7 +1228,7 @@ class PostitManagerApp:
         self.badge_daemon.pack(side=tk.LEFT, padx=(0, 6))
 
         self.badge_cron = tk.Label(
-            badge_box,
+            hdr_right,
             text="● Cron: ...",
             font=(self.sys_font, 9, "bold"),
             bg="#F1F5F9",
@@ -887,12 +1236,30 @@ class PostitManagerApp:
             padx=10,
             pady=4
         )
-        self.badge_cron.pack(side=tk.LEFT)
+        self.badge_cron.pack(side=tk.LEFT, padx=(0, 12))
+
+        # Selettore di Lingua (Italiano / Inglese)
+        lang_frame = tk.Frame(hdr_right, bg="#FFFFFF")
+        lang_frame.pack(side=tk.LEFT)
+
+        self.lbl_lang_icon = tk.Label(lang_frame, text="🌐", font=("Sans", 11), bg="#FFFFFF")
+        self.lbl_lang_icon.pack(side=tk.LEFT, padx=(0, 4))
+
+        self.combo_lang = ttk.Combobox(
+            lang_frame,
+            values=["🇮🇹 Italiano", "🇬🇧 English"],
+            state="readonly",
+            width=12,
+            font=(self.sys_font, 9)
+        )
+        self.combo_lang.set("🇮🇹 Italiano" if self.lang == "it" else "🇬🇧 English")
+        self.combo_lang.pack(side=tk.LEFT)
+        self.combo_lang.bind("<<ComboboxSelected>>", self.on_language_change)
 
         main_content = tk.Frame(self.root, bg=self.color_bg, padx=18, pady=14)
         main_content.pack(fill=tk.BOTH, expand=True)
 
-        left_col = tk.Frame(main_content, bg=self.color_bg, width=460)
+        left_col = tk.Frame(main_content, bg=self.color_bg, width=470)
         left_col.pack(side=tk.LEFT, fill=tk.BOTH, padx=(0, 10))
 
         right_col = tk.Frame(main_content, bg=self.color_bg)
@@ -904,23 +1271,88 @@ class PostitManagerApp:
         status_bar = tk.Frame(self.root, bg="#FFFFFF", padx=18, pady=8, highlightbackground=self.color_border, highlightthickness=1)
         status_bar.pack(fill=tk.X, side=tk.BOTTOM)
 
-        self.lbl_status = tk.Label(status_bar, text="Pronto.", font=(self.sys_font, 9), bg="#FFFFFF", fg=self.color_muted)
+        self.lbl_status = tk.Label(status_bar, text=t("status_ready", self.lang), font=(self.sys_font, 9), bg="#FFFFFF", fg=self.color_muted)
         self.lbl_status.pack(side=tk.LEFT)
 
-        lbl_path = tk.Label(status_bar, text=f"Dati: {REMINDERS_FILE.name}", font=(self.sys_font, 9), bg="#FFFFFF", fg="#94A3B8")
-        lbl_path.pack(side=tk.RIGHT)
+        self.lbl_path = tk.Label(status_bar, text=t("status_data", self.lang, filename=REMINDERS_FILE.name), font=(self.sys_font, 9), bg="#FFFFFF", fg="#94A3B8")
+        self.lbl_path.pack(side=tk.RIGHT)
+
+    def on_language_change(self, event=None):
+        """Gestore cambio lingua dal selettore UI."""
+        val = self.combo_lang.get()
+        new_lang = "it" if "Italiano" in val else "en"
+        if new_lang != self.lang:
+            self.lang = new_lang
+            ConfigStore.set_language(new_lang)
+            self.apply_language()
+
+    def apply_language(self):
+        """Applica la lingua selezionata aggiornando tutti i testi dell'interfaccia a caldo."""
+        self.root.title(t("app_window_title", self.lang))
+        self.lbl_app_title.config(text=t("app_title", self.lang))
+        self.lbl_app_sub.config(text=t("app_subtitle", self.lang))
+        self.check_system_status()
+
+        # Form
+        self.lbl_form_section.config(text=t("form_section_title", self.lang))
+        self.update_preset_button()
+        self.lbl_colors.config(text=t("lbl_bg_color", self.lang))
+        self.lbl_selected_color_name.config(text=get_color_name(self.selected_color, self.lang))
+        self.lbl_time.config(text=t("lbl_time", self.lang))
+        self.lbl_freq.config(text=t("lbl_freq", self.lang))
+
+        cur_freq = self.combo_freq.get()
+        is_wk = any(k in cur_freq for k in ["Lun-Ven", "Mon-Fri", "feriali", "Weekdays"])
+        self.combo_freq.config(values=[t("freq_weekdays", self.lang), t("freq_daily", self.lang)])
+        self.combo_freq.set(t("freq_weekdays", self.lang) if is_wk else t("freq_daily", self.lang))
+
+        self.lbl_title.config(text=t("lbl_title", self.lang))
+        self.lbl_toolbar.config(text=t("lbl_formatting", self.lang))
+        self.btn_bold.config(text=t("btn_bold", self.lang))
+        self.btn_italic.config(text=t("btn_italic", self.lang))
+        self.btn_under.config(text=t("btn_underline", self.lang))
+        self.btn_hl.config(text=t("btn_highlight", self.lang))
+        self.btn_bullet.config(text=t("btn_bullet", self.lang))
+        self.btn_h3.config(text=t("btn_heading", self.lang))
+        self.btn_reset_fmt.config(text=t("btn_clean", self.lang))
+        self.lbl_links.config(text=t("lbl_links", self.lang))
+
+        if self.editing_id:
+            self.btn_save.config(text=t("btn_update_reminder", self.lang))
+        else:
+            self.btn_save.config(text=t("btn_save_reminder", self.lang))
+        self.btn_save_as_preset.config(text=t("btn_save_as_preset", self.lang))
+        self.btn_clear.config(text=t("btn_clear", self.lang))
+
+        # List & Table
+        self.lbl_hint.config(text=t("table_double_click_hint", self.lang))
+        self.tree.heading("time", text=t("col_time", self.lang))
+        self.tree.heading("frequency", text=t("col_freq", self.lang))
+        self.tree.heading("color", text=t("col_color", self.lang))
+        self.tree.heading("title", text=t("col_title", self.lang))
+        self.tree.heading("links", text=t("col_links", self.lang))
+
+        self.btn_desktop.config(text=t("btn_desktop", self.lang))
+        self.btn_alarm.config(text=t("btn_test_alarm", self.lang))
+        self.btn_preset_from_row.config(text=t("btn_set_as_preset", self.lang))
+        self.btn_delete.config(text=t("btn_delete", self.lang))
+        self.btn_sync.config(text=t("btn_sync", self.lang))
+
+        self.refresh_reminders_table()
+        self.lbl_status.config(text=t("status_ready", self.lang))
+        self.lbl_path.config(text=t("status_data", self.lang, filename=REMINDERS_FILE.name))
 
     def _build_form(self, container):
         card = tk.Frame(container, bg=self.color_card, padx=16, pady=14, highlightbackground=self.color_border, highlightthickness=1)
         card.pack(fill=tk.BOTH, expand=True)
 
-        lbl_section = tk.Label(card, text="Crea o Modifica Post-it", font=(self.sys_font, 12, "bold"), bg=self.color_card, fg=self.color_text)
-        lbl_section.pack(anchor="w", pady=(0, 8))
+        self.lbl_form_section = tk.Label(card, text=t("form_section_title", self.lang), font=(self.sys_font, 12, "bold"), bg=self.color_card, fg=self.color_text)
+        self.lbl_form_section.pack(anchor="w", pady=(0, 8))
 
         # PULSANTE PRESET RAPIDO DINAMICO (configurabile)
         self.btn_preset = tk.Button(
             card,
-            text="⚡ Carica Preset Rapido...",
+            text=t("btn_preset_empty", self.lang),
             font=(self.sys_font, 9, "bold"),
             relief=tk.FLAT,
             cursor="hand2",
@@ -930,8 +1362,8 @@ class PostitManagerApp:
         )
         self.btn_preset.pack(fill=tk.X, pady=(0, 10))
 
-        lbl_colors = tk.Label(card, text="Colore Sfondo Post-it:", font=(self.sys_font, 9, "bold"), bg=self.color_card, fg="#475569")
-        lbl_colors.pack(anchor="w")
+        self.lbl_colors = tk.Label(card, text=t("lbl_bg_color", self.lang), font=(self.sys_font, 9, "bold"), bg=self.color_card, fg="#475569")
+        self.lbl_colors.pack(anchor="w")
 
         color_row = tk.Frame(card, bg=self.color_card)
         color_row.pack(fill=tk.X, pady=(4, 10))
@@ -956,7 +1388,7 @@ class PostitManagerApp:
 
         self.lbl_selected_color_name = tk.Label(
             color_row,
-            text=COLOR_THEMES[self.selected_color]["name"],
+            text=get_color_name(self.selected_color, self.lang),
             font=(self.sys_font, 9, "italic"),
             bg=self.color_card,
             fg="#64748B"
@@ -969,8 +1401,8 @@ class PostitManagerApp:
         col_time = tk.Frame(row_time, bg=self.color_card)
         col_time.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 6))
 
-        lbl_time = tk.Label(col_time, text="Orario (HH:MM):", font=(self.sys_font, 9, "bold"), bg=self.color_card, fg="#475569")
-        lbl_time.pack(anchor="w")
+        self.lbl_time = tk.Label(col_time, text=t("lbl_time", self.lang), font=(self.sys_font, 9, "bold"), bg=self.color_card, fg="#475569")
+        self.lbl_time.pack(anchor="w")
 
         self.entry_time = tk.Entry(col_time, font=(self.sys_font, 11), bg="#F8FAFC", relief=tk.SOLID, bd=1)
         self.entry_time.insert(0, "18:00")
@@ -979,53 +1411,53 @@ class PostitManagerApp:
         col_freq = tk.Frame(row_time, bg=self.color_card)
         col_freq.pack(side=tk.RIGHT, fill=tk.X, expand=True, padx=(6, 0))
 
-        lbl_freq = tk.Label(col_freq, text="Frequenza:", font=(self.sys_font, 9, "bold"), bg=self.color_card, fg="#475569")
-        lbl_freq.pack(anchor="w")
+        self.lbl_freq = tk.Label(col_freq, text=t("lbl_freq", self.lang), font=(self.sys_font, 9, "bold"), bg=self.color_card, fg="#475569")
+        self.lbl_freq.pack(anchor="w")
 
-        self.combo_freq = ttk.Combobox(col_freq, values=["Lun-Ven (Giorni feriali)", "Ogni Giorno"], state="readonly", font=(self.sys_font, 10))
-        self.combo_freq.set("Lun-Ven (Giorni feriali)")
+        self.combo_freq = ttk.Combobox(col_freq, values=[t("freq_weekdays", self.lang), t("freq_daily", self.lang)], state="readonly", font=(self.sys_font, 10))
+        self.combo_freq.set(t("freq_weekdays", self.lang))
         self.combo_freq.pack(fill=tk.X, pady=(2, 0))
 
-        lbl_title = tk.Label(card, text="Titolo:", font=(self.sys_font, 9, "bold"), bg=self.color_card, fg="#475569")
-        lbl_title.pack(anchor="w")
+        self.lbl_title = tk.Label(card, text=t("lbl_title", self.lang), font=(self.sys_font, 9, "bold"), bg=self.color_card, fg="#475569")
+        self.lbl_title.pack(anchor="w")
 
         self.entry_title = tk.Entry(card, font=(self.sys_font, 10), bg="#F8FAFC", relief=tk.SOLID, bd=1)
-        self.entry_title.insert(0, "Chiusura Attività")
+        self.entry_title.insert(0, t("default_title", self.lang))
         self.entry_title.pack(fill=tk.X, pady=(2, 8))
 
-        lbl_toolbar = tk.Label(card, text="Testo Messaggio (Formattazione):", font=(self.sys_font, 9, "bold"), bg=self.color_card, fg="#475569")
-        lbl_toolbar.pack(anchor="w")
+        self.lbl_toolbar = tk.Label(card, text=t("lbl_formatting", self.lang), font=(self.sys_font, 9, "bold"), bg=self.color_card, fg="#475569")
+        self.lbl_toolbar.pack(anchor="w")
 
         tb_frame = tk.Frame(card, bg="#F1F5F9", padx=4, pady=3, relief=tk.SOLID, bd=1)
         tb_frame.pack(fill=tk.X, pady=(2, 0))
 
-        btn_bold = tk.Button(tb_frame, text="G", font=(self.sys_font, 9, "bold"), width=3, relief=tk.FLAT, cursor="hand2", command=lambda: self.insert_formatting("**"))
-        btn_bold.pack(side=tk.LEFT, padx=1)
+        self.btn_bold = tk.Button(tb_frame, text=t("btn_bold", self.lang), font=(self.sys_font, 9, "bold"), width=3, relief=tk.FLAT, cursor="hand2", command=lambda: self.insert_formatting("**"))
+        self.btn_bold.pack(side=tk.LEFT, padx=1)
 
-        btn_italic = tk.Button(tb_frame, text="C", font=(self.sys_font, 9, "italic"), width=3, relief=tk.FLAT, cursor="hand2", command=lambda: self.insert_formatting("*"))
-        btn_italic.pack(side=tk.LEFT, padx=1)
+        self.btn_italic = tk.Button(tb_frame, text=t("btn_italic", self.lang), font=(self.sys_font, 9, "italic"), width=3, relief=tk.FLAT, cursor="hand2", command=lambda: self.insert_formatting("*"))
+        self.btn_italic.pack(side=tk.LEFT, padx=1)
 
-        btn_under = tk.Button(tb_frame, text="S", font=(self.sys_font, 9, "underline"), width=3, relief=tk.FLAT, cursor="hand2", command=lambda: self.insert_formatting("__"))
-        btn_under.pack(side=tk.LEFT, padx=1)
+        self.btn_under = tk.Button(tb_frame, text=t("btn_underline", self.lang), font=(self.sys_font, 9, "underline"), width=3, relief=tk.FLAT, cursor="hand2", command=lambda: self.insert_formatting("__"))
+        self.btn_under.pack(side=tk.LEFT, padx=1)
 
-        btn_hl = tk.Button(tb_frame, text="🟡 Evidenzia", font=(self.sys_font, 8, "bold"), bg="#FEF08A", relief=tk.FLAT, cursor="hand2", command=lambda: self.insert_formatting("=="))
-        btn_hl.pack(side=tk.LEFT, padx=3)
+        self.btn_hl = tk.Button(tb_frame, text=t("btn_highlight", self.lang), font=(self.sys_font, 8, "bold"), bg="#FEF08A", relief=tk.FLAT, cursor="hand2", command=lambda: self.insert_formatting("=="))
+        self.btn_hl.pack(side=tk.LEFT, padx=3)
 
-        btn_bullet = tk.Button(tb_frame, text="• Elenco", font=(self.sys_font, 8), relief=tk.FLAT, cursor="hand2", command=self.insert_bullet)
-        btn_bullet.pack(side=tk.LEFT, padx=1)
+        self.btn_bullet = tk.Button(tb_frame, text=t("btn_bullet", self.lang), font=(self.sys_font, 8), relief=tk.FLAT, cursor="hand2", command=self.insert_bullet)
+        self.btn_bullet.pack(side=tk.LEFT, padx=1)
 
-        btn_h3 = tk.Button(tb_frame, text="Titolo H3", font=(self.sys_font, 8, "bold"), relief=tk.FLAT, cursor="hand2", command=self.insert_h3)
-        btn_h3.pack(side=tk.LEFT, padx=1)
+        self.btn_h3 = tk.Button(tb_frame, text=t("btn_heading", self.lang), font=(self.sys_font, 8, "bold"), relief=tk.FLAT, cursor="hand2", command=self.insert_h3)
+        self.btn_h3.pack(side=tk.LEFT, padx=1)
 
-        btn_reset_fmt = tk.Button(tb_frame, text="🧹 Pulisci", font=(self.sys_font, 8), relief=tk.FLAT, cursor="hand2", command=self.clean_formatting)
-        btn_reset_fmt.pack(side=tk.RIGHT, padx=1)
+        self.btn_reset_fmt = tk.Button(tb_frame, text=t("btn_clean", self.lang), font=(self.sys_font, 8), relief=tk.FLAT, cursor="hand2", command=self.clean_formatting)
+        self.btn_reset_fmt.pack(side=tk.RIGHT, padx=1)
 
         self.txt_text = tk.Text(card, font=(self.sys_font, 10), bg="#F8FAFC", height=5, relief=tk.SOLID, bd=1, wrap=tk.WORD)
-        self.txt_text.insert("1.0", "Ricordati di aggiornare le tue attività prima di staccare.")
+        self.txt_text.insert("1.0", t("default_message_text", self.lang))
         self.txt_text.pack(fill=tk.X, pady=(0, 8))
 
-        lbl_links = tk.Label(card, text="Collegamenti Rapidi (Opzionali):", font=(self.sys_font, 9, "bold"), bg=self.color_card, fg="#475569")
-        lbl_links.pack(anchor="w")
+        self.lbl_links = tk.Label(card, text=t("lbl_links", self.lang), font=(self.sys_font, 9, "bold"), bg=self.color_card, fg="#475569")
+        self.lbl_links.pack(anchor="w")
 
         row_l1 = tk.Frame(card, bg=self.color_card)
         row_l1.pack(fill=tk.X, pady=(2, 4))
@@ -1046,7 +1478,7 @@ class PostitManagerApp:
 
         self.btn_save = tk.Button(
             row_actions,
-            text="💾 Salva Promemoria",
+            text=t("btn_save_reminder", self.lang),
             font=(self.sys_font, 10, "bold"),
             bg="#3584E4",
             fg="#FFFFFF",
@@ -1060,9 +1492,9 @@ class PostitManagerApp:
         )
         self.btn_save.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 6))
 
-        btn_save_as_preset = tk.Button(
+        self.btn_save_as_preset = tk.Button(
             row_actions,
-            text="⭐ Salva come Preset",
+            text=t("btn_save_as_preset", self.lang),
             font=(self.sys_font, 9, "bold"),
             bg="#FEF3C7",
             fg="#92400E",
@@ -1073,11 +1505,11 @@ class PostitManagerApp:
             pady=7,
             command=self.save_current_form_as_preset
         )
-        btn_save_as_preset.pack(side=tk.LEFT, padx=(0, 6))
+        self.btn_save_as_preset.pack(side=tk.LEFT, padx=(0, 6))
 
-        btn_clear = tk.Button(
+        self.btn_clear = tk.Button(
             row_actions,
-            text="Pulisci",
+            text=t("btn_clear", self.lang),
             font=(self.sys_font, 9),
             bg="#F1F5F9",
             fg="#475569",
@@ -1087,7 +1519,7 @@ class PostitManagerApp:
             pady=7,
             command=self.clear_form
         )
-        btn_clear.pack(side=tk.RIGHT)
+        self.btn_clear.pack(side=tk.RIGHT)
 
     def _build_list(self, container):
         card = tk.Frame(container, bg=self.color_card, padx=16, pady=14, highlightbackground=self.color_border, highlightthickness=1)
@@ -1096,11 +1528,11 @@ class PostitManagerApp:
         header_row = tk.Frame(card, bg=self.color_card)
         header_row.pack(fill=tk.X, pady=(0, 8))
 
-        self.lbl_list_count = tk.Label(header_row, text="Elenco Promemoria", font=(self.sys_font, 12, "bold"), bg=self.color_card, fg=self.color_text)
+        self.lbl_list_count = tk.Label(header_row, text=t("table_section_title", self.lang), font=(self.sys_font, 12, "bold"), bg=self.color_card, fg=self.color_text)
         self.lbl_list_count.pack(side=tk.LEFT)
 
-        lbl_hint = tk.Label(header_row, text="💡 Doppio click per mettere sul desktop", font=(self.sys_font, 9, "italic"), bg=self.color_card, fg="#64748B")
-        lbl_hint.pack(side=tk.RIGHT)
+        self.lbl_hint = tk.Label(header_row, text=t("table_double_click_hint", self.lang), font=(self.sys_font, 9, "italic"), bg=self.color_card, fg="#64748B")
+        self.lbl_hint.pack(side=tk.RIGHT)
 
         table_frame = tk.Frame(card, bg=self.color_card)
         table_frame.pack(fill=tk.BOTH, expand=True)
@@ -1108,17 +1540,17 @@ class PostitManagerApp:
         columns = ("time", "frequency", "color", "title", "links")
         self.tree = ttk.Treeview(table_frame, columns=columns, show="headings", selectmode="browse")
 
-        self.tree.heading("time", text="Orario")
-        self.tree.heading("frequency", text="Frequenza")
-        self.tree.heading("color", text="Colore")
-        self.tree.heading("title", text="Titolo")
-        self.tree.heading("links", text="Link")
+        self.tree.heading("time", text=t("col_time", self.lang))
+        self.tree.heading("frequency", text=t("col_freq", self.lang))
+        self.tree.heading("color", text=t("col_color", self.lang))
+        self.tree.heading("title", text=t("col_title", self.lang))
+        self.tree.heading("links", text=t("col_links", self.lang))
 
         self.tree.column("time", width=70, minwidth=60, anchor="center")
         self.tree.column("frequency", width=120, minwidth=90, anchor="w")
-        self.tree.column("color", width=80, minwidth=60, anchor="center")
+        self.tree.column("color", width=95, minwidth=70, anchor="center")
         self.tree.column("title", width=140, minwidth=100, anchor="w")
-        self.tree.column("links", width=120, minwidth=80, anchor="w")
+        self.tree.column("links", width=110, minwidth=70, anchor="w")
 
         scrollbar = ttk.Scrollbar(table_frame, orient=tk.VERTICAL, command=self.tree.yview)
         self.tree.configure(yscrollcommand=scrollbar.set)
@@ -1132,9 +1564,9 @@ class PostitManagerApp:
         action_bar = tk.Frame(card, bg=self.color_card)
         action_bar.pack(fill=tk.X, pady=(10, 0))
 
-        btn_desktop = tk.Button(
+        self.btn_desktop = tk.Button(
             action_bar,
-            text="📌 Metti sul Desktop",
+            text=t("btn_desktop", self.lang),
             font=(self.sys_font, 10, "bold"),
             bg="#0284C7",
             fg="#FFFFFF",
@@ -1146,11 +1578,11 @@ class PostitManagerApp:
             pady=7,
             command=self.put_selected_on_desktop
         )
-        btn_desktop.pack(side=tk.LEFT, padx=(0, 6))
+        self.btn_desktop.pack(side=tk.LEFT, padx=(0, 6))
 
-        btn_alarm = tk.Button(
+        self.btn_alarm = tk.Button(
             action_bar,
-            text="👁️ Testa Allarme Ora",
+            text=t("btn_test_alarm", self.lang),
             font=(self.sys_font, 9, "bold"),
             bg="#D97706",
             fg="#FFFFFF",
@@ -1162,11 +1594,11 @@ class PostitManagerApp:
             pady=7,
             command=self.test_alarm_now
         )
-        btn_alarm.pack(side=tk.LEFT, padx=(0, 6))
+        self.btn_alarm.pack(side=tk.LEFT, padx=(0, 6))
 
-        btn_preset_from_row = tk.Button(
+        self.btn_preset_from_row = tk.Button(
             action_bar,
-            text="⭐ Imposta come Preset",
+            text=t("btn_set_as_preset", self.lang),
             font=(self.sys_font, 9, "bold"),
             bg="#FEF3C7",
             fg="#92400E",
@@ -1177,11 +1609,11 @@ class PostitManagerApp:
             pady=7,
             command=self.set_selected_as_preset
         )
-        btn_preset_from_row.pack(side=tk.LEFT, padx=(0, 6))
+        self.btn_preset_from_row.pack(side=tk.LEFT, padx=(0, 6))
 
-        btn_delete = tk.Button(
+        self.btn_delete = tk.Button(
             action_bar,
-            text="🗑️ Elimina",
+            text=t("btn_delete", self.lang),
             font=(self.sys_font, 9, "bold"),
             bg="#EF4444",
             fg="#FFFFFF",
@@ -1193,11 +1625,11 @@ class PostitManagerApp:
             pady=7,
             command=self.delete_selected_reminder
         )
-        btn_delete.pack(side=tk.LEFT, padx=(0, 6))
+        self.btn_delete.pack(side=tk.LEFT, padx=(0, 6))
 
-        btn_sync = tk.Button(
+        self.btn_sync = tk.Button(
             action_bar,
-            text="🔄 Sincronizza",
+            text=t("btn_sync", self.lang),
             font=(self.sys_font, 9),
             bg="#F1F5F9",
             fg="#334155",
@@ -1207,7 +1639,7 @@ class PostitManagerApp:
             pady=7,
             command=self.manual_sync
         )
-        btn_sync.pack(side=tk.RIGHT)
+        self.btn_sync.pack(side=tk.RIGHT)
 
     def select_color(self, color_key: str):
         self.selected_color = color_key
@@ -1216,7 +1648,7 @@ class PostitManagerApp:
                 btn.config(text="✓", bd=2)
             else:
                 btn.config(text="", bd=1)
-        self.lbl_selected_color_name.config(text=COLOR_THEMES[color_key]["name"])
+        self.lbl_selected_color_name.config(text=get_color_name(color_key, self.lang))
 
     def insert_formatting(self, marker: str):
         try:
@@ -1227,7 +1659,8 @@ class PostitManagerApp:
             self.txt_text.insert(sel_start, f"{marker}{selected_text}{marker}")
         except tk.TclError:
             cur_idx = self.txt_text.index(tk.INSERT)
-            self.txt_text.insert(cur_idx, f"{marker}testo{marker}")
+            placeholder = "testo" if self.lang == "it" else "text"
+            self.txt_text.insert(cur_idx, f"{marker}{placeholder}{marker}")
 
     def insert_bullet(self):
         cur_idx = self.txt_text.index(tk.INSERT)
@@ -1253,14 +1686,14 @@ class PostitManagerApp:
         cron_ok = CronManager.is_cron_service_active()
 
         if daemon_ok:
-            self.badge_daemon.config(text="● Demone: ATTIVO", bg="#DCFCE7", fg="#15803D")
+            self.badge_daemon.config(text=t("daemon_active", self.lang), bg="#DCFCE7", fg="#15803D")
         else:
-            self.badge_daemon.config(text="⚠️ Demone: INATTIVO", bg="#FEF3C7", fg="#B45309")
+            self.badge_daemon.config(text=t("daemon_inactive", self.lang), bg="#FEF3C7", fg="#B45309")
 
         if cron_ok:
-            self.badge_cron.config(text="● Cron: ATTIVO", bg="#DCFCE7", fg="#15803D")
+            self.badge_cron.config(text=t("cron_active", self.lang), bg="#DCFCE7", fg="#15803D")
         else:
-            self.badge_cron.config(text="⚠️ Cron: INATTIVO", bg="#FEE2E2", fg="#B91C1C")
+            self.badge_cron.config(text=t("cron_inactive", self.lang), bg="#FEE2E2", fg="#B91C1C")
 
     def update_preset_button(self):
         """Aggiorna lo stato e il testo del pulsante Preset in base al file preset.json."""
@@ -1269,7 +1702,7 @@ class PostitManagerApp:
             title = preset.get("title", "Preset")
             time_val = preset.get("time", "--:--")
             self.btn_preset.config(
-                text=f"⚡ Carica Preset: {title} ({time_val})",
+                text=t("btn_preset_format", self.lang, title=title, time=time_val),
                 bg="#FEF08A",
                 fg="#854D0E",
                 activebackground="#FDE047",
@@ -1277,7 +1710,7 @@ class PostitManagerApp:
             )
         else:
             self.btn_preset.config(
-                text="⚡ Preset Rapido: (Nessun preset memorizzato - clicca qui per info)",
+                text=t("btn_preset_empty", self.lang),
                 bg="#F1F5F9",
                 fg="#64748B",
                 activebackground="#E2E8F0",
@@ -1289,19 +1722,18 @@ class PostitManagerApp:
         preset = PresetStore.load()
         if not preset:
             messagebox.showinfo(
-                "Nessun Preset Memorizzato",
-                "Non hai ancora memorizzato un Preset Rapido.\n\n"
-                "Come creare il tuo Preset:\n"
-                "1. Compila i campi del modulo oppure seleziona un promemoria dalla tabella.\n"
-                "2. Clicca sul pulsante '⭐ Salva come Preset'.\n\n"
-                "I tuoi dati verranno memorizzati nel tuo profilo locale e potrai riutilizzarli al volo in qualsiasi momento!"
+                t("msg_no_preset_title", self.lang),
+                t("msg_no_preset_body", self.lang)
             )
             return
 
         self.entry_time.delete(0, tk.END)
         self.entry_time.insert(0, preset.get("time", "18:00"))
 
-        self.combo_freq.set(preset.get("frequency", "Lun-Ven (Giorni feriali)"))
+        raw_freq = preset.get("frequency", "")
+        is_wk = any(k in raw_freq for k in ["Lun-Ven", "Mon-Fri", "feriali", "Weekdays"])
+        self.combo_freq.set(t("freq_weekdays", self.lang) if is_wk else t("freq_daily", self.lang))
+
         self.select_color(preset.get("color", "yellow"))
 
         self.entry_title.delete(0, tk.END)
@@ -1323,14 +1755,14 @@ class PostitManagerApp:
             self.entry_l2_label.insert(0, links[1].get("label", ""))
             self.entry_l2_url.insert(0, links[1].get("url", ""))
 
-        self.lbl_status.config(text=f"✓ Preset '{preset.get('title')}' caricato nel modulo.")
+        self.lbl_status.config(text=t("status_preset_loaded", self.lang, title=preset.get('title')))
 
     def save_current_form_as_preset(self):
         """Salva i dati attualmente compilati nel form come Preset Rapido."""
         time_str = self.entry_time.get().strip() or "18:00"
         title = self.entry_title.get().strip()
         if not title:
-            messagebox.showwarning("Titolo Mancante", "Inserisci almeno un titolo prima di salvare il Preset.")
+            messagebox.showwarning(t("msg_missing_title_title", self.lang), t("msg_missing_title_body", self.lang))
             return
 
         text = self.txt_text.get("1.0", tk.END).strip()
@@ -1340,12 +1772,12 @@ class PostitManagerApp:
         l1_label = self.entry_l1_label.get().strip()
         l1_url = self.entry_l1_url.get().strip()
         if l1_url:
-            links.append({"label": l1_label or "Link 1", "url": l1_url})
+            links.append({"label": l1_label or t("link1_default_label", self.lang), "url": l1_url})
 
         l2_label = self.entry_l2_label.get().strip()
         l2_url = self.entry_l2_url.get().strip()
         if l2_url:
-            links.append({"label": l2_label or "Link 2", "url": l2_url})
+            links.append({"label": l2_label or t("link2_default_label", self.lang), "url": l2_url})
 
         preset_data = {
             "time": time_str,
@@ -1358,21 +1790,19 @@ class PostitManagerApp:
 
         if PresetStore.save(preset_data):
             self.update_preset_button()
-            self.lbl_status.config(text=f"⭐ Preset '{title}' memorizzato con successo!")
+            self.lbl_status.config(text=t("status_preset_stored", self.lang, title=title))
             messagebox.showinfo(
-                "Preset Memorizzato",
-                f"Il promemoria '{title}' è stato memorizzato come Preset Rapido!\n\n"
-                "• Rimarrà salvato nel tuo sistema anche se elimini questo promemoria dalla tabella.\n"
-                "• Potrai ricompilarlo all'istante ogni volta che vorrai cliccando su 'Carica Preset'."
+                t("msg_preset_saved_title", self.lang),
+                t("msg_preset_saved_body", self.lang, title=title)
             )
         else:
-            messagebox.showerror("Errore", "Impossibile salvare il Preset.")
+            messagebox.showerror(t("msg_error_title", self.lang), t("msg_preset_save_error", self.lang))
 
     def set_selected_as_preset(self):
         """Salva il promemoria selezionato nella tabella come Preset Rapido."""
         selected = self.tree.selection()
         if not selected:
-            messagebox.showwarning("Nessuna selezione", "Seleziona un promemoria dalla tabella da impostare come Preset.")
+            messagebox.showwarning(t("msg_no_selection_title", self.lang), t("msg_no_selection_preset", self.lang))
             return
 
         rem = ReminderStore.get_by_id(selected[0])
@@ -1381,40 +1811,39 @@ class PostitManagerApp:
 
         preset_data = {
             "time": rem.get("time", "18:00"),
-            "frequency": rem.get("frequency", "Lun-Ven (Giorni feriali)"),
+            "frequency": rem.get("frequency", t("freq_weekdays", self.lang)),
             "color": rem.get("color", "yellow"),
-            "title": rem.get("title", "Promemoria"),
+            "title": rem.get("title", t("postit_default_title", self.lang)),
             "text": rem.get("text", ""),
             "links": rem.get("links", [])
         }
 
         if PresetStore.save(preset_data):
             self.update_preset_button()
-            self.lbl_status.config(text=f"⭐ Promemoria '{rem.get('title')}' impostato come Preset!")
+            self.lbl_status.config(text=t("status_preset_stored", self.lang, title=rem.get('title')))
             messagebox.showinfo(
-                "Preset Memorizzato",
-                f"Il promemoria '{rem.get('title')}' è stato memorizzato come Preset Rapido!\n\n"
-                "• Rimarrà salvato nel tuo sistema anche se elimini questo promemoria dalla tabella.\n"
-                "• Se in futuro imposti un altro promemoria come preset, sovrascriverà questi dati."
+                t("msg_preset_saved_title", self.lang),
+                t("msg_preset_row_saved_body", self.lang, title=rem.get('title'))
             )
         else:
-            messagebox.showerror("Errore", "Impossibile salvare il Preset.")
+            messagebox.showerror(t("msg_error_title", self.lang), t("msg_preset_save_error", self.lang))
 
     def clear_form(self):
         self.editing_id = None
-        self.btn_save.config(text="💾 Salva Promemoria")
+        self.btn_save.config(text=t("btn_save_reminder", self.lang))
         self.entry_time.delete(0, tk.END)
         self.entry_time.insert(0, "18:00")
-        self.combo_freq.set("Lun-Ven (Giorni feriali)")
+        self.combo_freq.set(t("freq_weekdays", self.lang))
         self.select_color("yellow")
         self.entry_title.delete(0, tk.END)
-        self.entry_title.insert(0, "Chiusura Attività")
+        self.entry_title.insert(0, t("default_title", self.lang))
         self.txt_text.delete("1.0", tk.END)
+        self.txt_text.insert("1.0", t("default_message_text", self.lang))
         self.entry_l1_label.delete(0, tk.END)
         self.entry_l1_url.delete(0, tk.END)
         self.entry_l2_label.delete(0, tk.END)
         self.entry_l2_url.delete(0, tk.END)
-        self.lbl_status.config(text="Modulo ripulito.")
+        self.lbl_status.config(text=t("status_form_cleared", self.lang))
 
     def on_tree_select(self, event):
         selected = self.tree.selection()
@@ -1426,12 +1855,15 @@ class PostitManagerApp:
             return
 
         self.editing_id = rem.get("id")
-        self.btn_save.config(text="💾 Aggiorna Modifiche")
+        self.btn_save.config(text=t("btn_update_reminder", self.lang))
 
         self.entry_time.delete(0, tk.END)
         self.entry_time.insert(0, rem.get("time", "18:00"))
 
-        self.combo_freq.set(rem.get("frequency", "Lun-Ven (Giorni feriali)"))
+        raw_freq = rem.get("frequency", "")
+        is_wk = any(k in raw_freq for k in ["Lun-Ven", "Mon-Fri", "feriali", "Weekdays"])
+        self.combo_freq.set(t("freq_weekdays", self.lang) if is_wk else t("freq_daily", self.lang))
+
         self.select_color(rem.get("color", "yellow"))
 
         self.entry_title.delete(0, tk.END)
@@ -1453,12 +1885,12 @@ class PostitManagerApp:
             self.entry_l2_label.insert(0, links[1].get("label", ""))
             self.entry_l2_url.insert(0, links[1].get("url", ""))
 
-        self.lbl_status.config(text=f"Caricato promemoria: '{rem.get('title')}'")
+        self.lbl_status.config(text=t("status_reminder_loaded", self.lang, title=rem.get('title')))
 
     def save_reminder_from_form(self):
         time_str = self.entry_time.get().strip()
         if not re.match(r"^([01]?\d|2[0-3]):[0-5]\d$", time_str):
-            messagebox.showerror("Orario non valido", "Inserisci un orario valido nel formato HH:MM (es. 18:00).")
+            messagebox.showerror(t("msg_invalid_time_title", self.lang), t("msg_invalid_time_body", self.lang))
             return
 
         parts = time_str.split(":")
@@ -1466,7 +1898,7 @@ class PostitManagerApp:
 
         title = self.entry_title.get().strip()
         if not title:
-            messagebox.showerror("Titolo obbligatorio", "Inserisci un titolo per il promemoria.")
+            messagebox.showerror(t("msg_title_required_title", self.lang), t("msg_title_required_body", self.lang))
             return
 
         text = self.txt_text.get("1.0", tk.END).strip()
@@ -1476,12 +1908,12 @@ class PostitManagerApp:
         l1_label = self.entry_l1_label.get().strip()
         l1_url = self.entry_l1_url.get().strip()
         if l1_url:
-            links.append({"label": l1_label or "Link 1", "url": l1_url})
+            links.append({"label": l1_label or t("link1_default_label", self.lang), "url": l1_url})
 
         l2_label = self.entry_l2_label.get().strip()
         l2_url = self.entry_l2_url.get().strip()
         if l2_url:
-            links.append({"label": l2_label or "Link 2", "url": l2_url})
+            links.append({"label": l2_label or t("link2_default_label", self.lang), "url": l2_url})
 
         rem_id = self.editing_id or f"rem-{uuid.uuid4().hex[:8]}"
         reminder_data = {
@@ -1497,35 +1929,38 @@ class PostitManagerApp:
 
         if ReminderStore.add_or_update(reminder_data):
             reminders = ReminderStore.load_all()
-            CronManager.sync_reminders(reminders)
+            CronManager.sync_reminders(reminders, lang=self.lang)
             self.refresh_reminders_table()
             self.clear_form()
-            self.lbl_status.config(text=f"✓ Promemoria '{title}' salvato!")
-            messagebox.showinfo("Salvataggio Completato", f"Il promemoria '{title}' è stato salvato.\nSarà attivato sia dal demone di sistema sia da Cron.")
+            self.lbl_status.config(text=t("status_reminder_saved", self.lang, title=title))
+            messagebox.showinfo(
+                t("msg_save_success_title", self.lang),
+                t("msg_save_success_body", self.lang, title=title)
+            )
         else:
-            messagebox.showerror("Errore", "Impossibile salvare il promemoria.")
+            messagebox.showerror(t("msg_error_title", self.lang), t("msg_save_error", self.lang))
 
     def delete_selected_reminder(self):
         selected = self.tree.selection()
         if not selected:
-            messagebox.showwarning("Nessuna selezione", "Seleziona un promemoria da eliminare.")
+            messagebox.showwarning(t("msg_no_selection_title", self.lang), t("msg_no_selection_delete", self.lang))
             return
 
         item_id = selected[0]
         rem = ReminderStore.get_by_id(item_id)
-        title = rem.get("title", "questo promemoria") if rem else "questo promemoria"
+        title = rem.get("title", "") if rem else ""
 
-        if not messagebox.askyesno("Conferma eliminazione", f"Vuoi davvero eliminare '{title}'?"):
+        if not messagebox.askyesno(t("msg_delete_confirm_title", self.lang), t("msg_delete_confirm_body", self.lang, title=title)):
             return
 
         if ReminderStore.delete_by_id(item_id):
             reminders = ReminderStore.load_all()
-            CronManager.sync_reminders(reminders)
+            CronManager.sync_reminders(reminders, lang=self.lang)
             self.refresh_reminders_table()
             self.clear_form()
-            self.lbl_status.config(text="Promemoria eliminato.")
+            self.lbl_status.config(text=t("status_reminder_deleted", self.lang))
         else:
-            messagebox.showerror("Errore", "Impossibile eliminare il promemoria.")
+            messagebox.showerror(t("msg_error_title", self.lang), t("msg_delete_error", self.lang))
 
     def put_selected_on_desktop(self):
         selected = self.tree.selection()
@@ -1545,9 +1980,9 @@ class PostitManagerApp:
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL
             )
-            self.lbl_status.config(text=f"📌 Post-it posizionato sul desktop (processo indipendente).")
+            self.lbl_status.config(text=t("status_desktop_launched", self.lang))
         except Exception as e:
-            messagebox.showerror("Errore Avvio", f"Impossibile avviare il Post-it sul desktop: {e}")
+            messagebox.showerror(t("msg_launch_error_title", self.lang), t("msg_launch_error_body", self.lang, error=e))
 
     def test_alarm_now(self):
         selected = self.tree.selection()
@@ -1566,36 +2001,37 @@ class PostitManagerApp:
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL
         )
-        self.lbl_status.config(text="🚨 Test sovraimpressione allarme inviato a schermo!")
+        self.lbl_status.config(text=t("status_alarm_tested", self.lang))
 
     def manual_sync(self):
         reminders = ReminderStore.load_all()
-        ok, msg = CronManager.sync_reminders(reminders)
+        ok, msg = CronManager.sync_reminders(reminders, lang=self.lang)
         self.check_system_status()
         self.lbl_status.config(text=msg)
         if ok:
-            messagebox.showinfo("Sincronizzazione", msg)
+            messagebox.showinfo(t("msg_sync_title", self.lang), msg)
         else:
-            messagebox.showerror("Errore", msg)
+            messagebox.showerror(t("msg_error_title", self.lang), msg)
 
     def refresh_reminders_table(self):
         for row in self.tree.get_children():
             self.tree.delete(row)
 
         reminders = ReminderStore.load_all()
-        self.lbl_list_count.config(text=f"Promemoria Attivi ({len(reminders)})")
+        self.lbl_list_count.config(text=t("table_active_count", self.lang, count=len(reminders)))
 
         for rem in sorted(reminders, key=lambda x: x.get("time", "00:00")):
             rem_id = rem.get("id")
             time_val = rem.get("time", "--:--")
-            freq_val = "Lun-Ven" if "Lun-Ven" in rem.get("frequency", "") else "Tutti i gg"
+            is_wk = any(k in rem.get("frequency", "") for k in ["Lun-Ven", "Mon-Fri", "feriali", "Weekdays"])
+            freq_val = t("freq_short_weekdays", self.lang) if is_wk else t("freq_short_daily", self.lang)
             c_key = rem.get("color", "yellow")
-            color_val = COLOR_THEMES.get(c_key, {}).get("name", c_key)
-            title_val = rem.get("title", "(Senza titolo)")
+            color_val = get_color_name(c_key, self.lang)
+            title_val = rem.get("title", "(Senza titolo)" if self.lang == "it" else "(Untitled)")
 
             links = rem.get("links", [])
             valid_links = [l for l in links if l.get("url", "").strip()]
-            links_str = f"{len(valid_links)} link" if valid_links else "—"
+            links_str = t("links_count", self.lang, count=len(valid_links)) if valid_links else t("no_links", self.lang)
 
             self.tree.insert("", tk.END, iid=rem_id, values=(time_val, freq_val, color_val, title_val, links_str))
 
@@ -1619,9 +2055,8 @@ def run_daemon():
                     rem_time = rem.get("time", "").strip()
                     freq = rem.get("frequency", "Lun-Ven (Giorni feriali)")
 
-                    is_day_valid = True
-                    if "Lun-Ven" in freq and weekday >= 5:
-                        is_day_valid = False
+                    is_weekdays = any(k in freq for k in ["Lun-Ven", "Mon-Fri", "feriali", "Weekdays"])
+                    is_day_valid = not (is_weekdays and weekday >= 5)
 
                     if is_day_valid and rem_time == current_time:
                         rem_id = rem.get("id")
@@ -1654,7 +2089,11 @@ def main():
     parser.add_argument("--daemon", action="store_true", help="Avvia il demone monitor di background")
     parser.add_argument("--sync-cron", action="store_true", help="Sincronizza crontab")
     parser.add_argument("--list", action="store_true", help="Elenca i promemoria salvati")
+    parser.add_argument("--lang", type=str, choices=["it", "en"], default="", help="Forza la lingua dell'applicazione ('it' o 'en')")
     args = parser.parse_args()
+
+    if args.lang:
+        ConfigStore.set_language(args.lang)
 
     ReminderStore.ensure_storage()
 
@@ -1677,7 +2116,7 @@ def main():
             rem = ReminderStore.get_by_id(args.id)
         if not rem:
             reminders = ReminderStore.load_all()
-            rem = reminders[0] if reminders else DEFAULT_WELCOME_REMINDER
+            rem = reminders[0] if reminders else DEFAULT_WELCOME_REMINDERS.get(ConfigStore.get_language(), DEFAULT_WELCOME_REMINDER)
 
         is_alarm = args.alarm or args.popup
         window = PostitWindow(rem, is_alarm_mode=is_alarm)

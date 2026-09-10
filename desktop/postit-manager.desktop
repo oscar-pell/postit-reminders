@@ -1,9 +1,12 @@
 [Desktop Entry]
 Version=1.0
 Type=Application
-Name=Promemoria Post-it
+Name=Post-it Reminders
+Name[it]=Promemoria Post-it
 GenericName=Desktop Sticky Notes & Reminders
-Comment=Gestore promemoria interattivi stile Post-it con avviso su schermo e collegamenti rapidi
+GenericName[it]=Promemoria Desktop e Note Adesive
+Comment=Interactive desktop sticky notes and reminders with scheduled overlay alarms
+Comment[it]=Gestore promemoria interattivi stile Post-it con avviso su schermo e collegamenti rapidi
 Exec=postit-runner.sh
 Icon=postit-manager
 Terminal=false
