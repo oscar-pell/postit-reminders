@@ -15,6 +15,7 @@ import locale
 import os
 import re
 import shutil
+import signal
 import subprocess
 import sys
 import threading
@@ -26,7 +27,7 @@ import webbrowser
 from pathlib import Path
 
 # Versione applicazione
-APP_VERSION = "1.1.8"
+APP_VERSION = "1.1.9"
 GITHUB_REPO = "oscar-pell/postit-reminders"
 GITHUB_RELEASES_URL = f"https://github.com/{GITHUB_REPO}/releases"
 GITHUB_API_LATEST = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
@@ -756,6 +757,103 @@ def open_url(url: str):
         webbrowser.open(clean_url)
 
 
+def is_pid_alive(pid: int) -> bool:
+    """Verifica se un processo con dato PID è attualmente attivo nel sistema."""
+    if pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+        return True
+    except (ProcessLookupError, PermissionError):
+        return False
+    except Exception:
+        return False
+
+
+def signal_existing_reminder(rem_id: str, is_alarm: bool = False) -> bool:
+    """
+    Controlla se esiste già un'istanza attiva della finestra per questo promemoria.
+    Se attiva, invia SIGUSR1 per portarla in primo piano / allarme e ritorna True.
+    Altrimenti ritorna False.
+    """
+    lock_file = RUN_DIR / f"window_{rem_id}.active"
+    if not lock_file.exists():
+        return False
+    try:
+        pid_str = lock_file.read_text().strip()
+        if pid_str.isdigit():
+            pid = int(pid_str)
+            if is_pid_alive(pid):
+                if is_alarm:
+                    try:
+                        os.kill(pid, signal.SIGUSR1)
+                    except Exception:
+                        pass
+                return True
+            else:
+                try:
+                    lock_file.unlink(missing_ok=True)
+                except Exception:
+                    pass
+    except Exception:
+        pass
+    return False
+
+
+def acquire_reminder_lock(rem_id: str, is_alarm: bool = False) -> tuple[bool, Path]:
+    """
+    Tenta di acquisire in modo atomico (O_CREAT | O_EXCL) il lockfile per il promemoria.
+    Se un'altra istanza è già attiva:
+      - Invia SIGUSR1 se è richiesta la modalità allarme.
+      - Ritorna (False, lock_path).
+    Se il file esiste ma il PID registrato non è più attivo (stale lock):
+      - Rimuove il lock obsoleto e riprova l'acquisizione atomica.
+    Ritorna (True, lock_path) se il lock è stato acquisito con successo.
+    """
+    RUN_DIR.mkdir(parents=True, exist_ok=True)
+    lock_file = RUN_DIR / f"window_{rem_id}.active"
+    current_pid = os.getpid()
+
+    for _ in range(2):
+        try:
+            fd = os.open(str(lock_file), os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o644)
+            with os.fdopen(fd, "w") as f:
+                f.write(str(current_pid))
+            return True, lock_file
+        except FileExistsError:
+            try:
+                pid_str = lock_file.read_text().strip()
+                if pid_str.isdigit():
+                    pid = int(pid_str)
+                    if is_pid_alive(pid):
+                        if is_alarm:
+                            try:
+                                os.kill(pid, signal.SIGUSR1)
+                            except Exception:
+                                pass
+                        return False, lock_file
+            except Exception:
+                pass
+
+            try:
+                lock_file.unlink(missing_ok=True)
+            except Exception:
+                pass
+
+    return True, lock_file
+
+
+def release_reminder_lock(lock_file: Path):
+    """Rilascia il lockfile solo se appartiene al processo corrente."""
+    try:
+        if lock_file and lock_file.exists():
+            content = lock_file.read_text().strip()
+            if content == str(os.getpid()):
+                lock_file.unlink(missing_ok=True)
+    except Exception:
+        pass
+
+
 class ReminderStore:
     """Gestione dati JSON persistente con scrittura atomica sicura."""
 
@@ -1445,23 +1543,31 @@ def render_formatted_text(text_widget: tk.Text, raw_text: str, theme: dict):
 class PostitWindow:
     """Finestra Post-it autonoma con pulsanti d'azione sempre visibili, bilingue e auto-sovraimpressione."""
 
-    def __init__(self, reminder: dict, is_alarm_mode: bool = False, parent=None, lang: str = None):
+    def __init__(self, reminder: dict, is_alarm_mode: bool = False, parent=None, lang: str = None, lock_file: Path = None):
         self.reminder = reminder
         self.is_alarm = is_alarm_mode
         self.parent = parent
         self.is_toplevel = parent is not None
         self.lang = lang or ConfigStore.get_language()
 
-        self.lock_file = RUN_DIR / f"window_{self.reminder.get('id', 'default')}.active"
-        try:
-            self.lock_file.write_text(str(os.getpid()))
-        except Exception:
-            pass
+        rem_id = self.reminder.get("id", "default")
+        if lock_file is not None:
+            self.lock_file = lock_file
+        else:
+            _, self.lock_file = acquire_reminder_lock(rem_id, is_alarm=self.is_alarm)
 
         if self.is_toplevel:
             self.root = tk.Toplevel(parent)
         else:
-            self.root = tk.Tk(className="postit-manager")
+            # Classi finestra distinte per evitare che GNOME Shell / Wayland raggruppi note da desktop e allarmi sollevandoli insieme
+            win_class = "postit-alarm-popup" if self.is_alarm else "postit-desktop-note"
+            self.root = tk.Tk(className=win_class)
+
+        # Registrazione signal handler per risveglio allarme runtime da parte di demone o cron
+        try:
+            signal.signal(signal.SIGUSR1, self._handle_sigusr1)
+        except Exception:
+            pass
 
         color_key = self.reminder.get("color", "yellow")
         self.theme = COLOR_THEMES.get(color_key, COLOR_THEMES["yellow"])
@@ -1737,16 +1843,20 @@ class PostitWindow:
         if is_day_valid and now_time == time_target:
             self.trigger_alarm_mode()
 
+    def _handle_sigusr1(self, signum=None, frame=None):
+        """Risponde al segnale SIGUSR1 inviato da demone o cron portando la finestra in allarme visivo e sonoro."""
+        try:
+            self.root.after(0, self.trigger_alarm_mode)
+        except Exception:
+            pass
+
     def _handle_click_url(self, url: str, label: str):
         open_url(url)
         self.status_lbl.config(text=t("postit_url_opened", self.lang, label=label), fg="#2563EB")
 
     def close(self):
-        try:
-            if self.lock_file.exists():
-                self.lock_file.unlink()
-        except Exception:
-            pass
+        if hasattr(self, "lock_file"):
+            release_reminder_lock(self.lock_file)
 
         if self.is_toplevel:
             self.root.destroy()
@@ -3009,7 +3119,6 @@ class PostitManagerApp:
             self.lbl_status.config(text=t("status_multiple_desktop_launched", self.lang, count=launched))
         elif launched == 1:
             self.lbl_status.config(text=t("status_desktop_launched", self.lang))
-            messagebox.showerror(t("msg_launch_error_title", self.lang), t("msg_launch_error_body", self.lang, error=e))
 
     def test_alarm_now(self):
         selected = self.tree.selection()
@@ -3021,13 +3130,15 @@ class PostitManagerApp:
             reminders = ReminderStore.load_all()
             rem_id = reminders[0]["id"] if reminders else "benvenuto-01"
 
-        runner = str(RUNNER_SH.resolve()) if RUNNER_SH.exists() else str(Path(__file__).resolve())
-        subprocess.Popen(
-            [runner, "--popup", "--alarm", "--id", rem_id],
-            start_new_session=True,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL
-        )
+        # Se la finestra del promemoria è già aperta, invia SIGUSR1 per portarla in allarme senza duplicarla
+        if not signal_existing_reminder(rem_id, is_alarm=True):
+            runner = str(RUNNER_SH.resolve()) if RUNNER_SH.exists() else str(Path(__file__).resolve())
+            subprocess.Popen(
+                [runner, "--popup", "--alarm", "--id", rem_id],
+                start_new_session=True,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL
+            )
         self.lbl_status.config(text=t("status_alarm_tested", self.lang))
 
     def manual_sync(self):
@@ -3287,7 +3398,7 @@ class PostitManagerApp:
 
 
 def run_daemon():
-    print("[Post-it Daemon] Monitor avviato con successo.")
+    print("[Post-it Daemon] Monitor avviato con successo.", flush=True)
     last_triggered_minute = ""
 
     while True:
@@ -3310,11 +3421,14 @@ def run_daemon():
 
                     if is_day_valid and rem_time == current_time:
                         rem_id = rem.get("id")
-                        lock_file = RUN_DIR / f"window_{rem_id}.active"
 
-                        if not lock_file.exists():
+                        # Se la finestra è già attiva (es. aperta sul desktop o già mostrata),
+                        # invia segnale SIGUSR1 per portarla in allarme senza aprire duplicati
+                        if signal_existing_reminder(rem_id, is_alarm=True):
+                            print(f"[Post-it Daemon] Allarme inviato a finestra attiva per '{rem.get('title')}'.", flush=True)
+                        else:
                             runner = str(RUNNER_SH.resolve()) if RUNNER_SH.exists() else str(Path(__file__).resolve())
-                            print(f"[Post-it Daemon] Trigger orario {current_time} per '{rem.get('title')}'.")
+                            print(f"[Post-it Daemon] Trigger orario {current_time} per '{rem.get('title')}'.", flush=True)
                             subprocess.Popen(
                                 [runner, "--popup", "--alarm", "--id", rem_id],
                                 start_new_session=True,
@@ -3325,7 +3439,7 @@ def run_daemon():
                 last_triggered_minute = current_time
 
         except Exception as e:
-            print(f"[Post-it Daemon] Errore monitor: {e}")
+            print(f"[Post-it Daemon] Errore monitor: {e}", flush=True)
 
         time.sleep(10)
 
@@ -3400,7 +3514,15 @@ def main():
             rem = reminders[0] if reminders else DEFAULT_WELCOME_REMINDERS.get(ConfigStore.get_language(), DEFAULT_WELCOME_REMINDER)
 
         is_alarm = args.alarm or args.popup
-        window = PostitWindow(rem, is_alarm_mode=is_alarm)
+        rem_id = rem.get("id", "default")
+
+        # Controllo Anti-Duplicazione atomico:
+        # Se la finestra per questo promemoria è già aperta, invia SIGUSR1 ed esci
+        acquired, lock_path = acquire_reminder_lock(rem_id, is_alarm=is_alarm)
+        if not acquired:
+            sys.exit(0)
+
+        window = PostitWindow(rem, is_alarm_mode=is_alarm, lock_file=lock_path)
         window.show()
         sys.exit(0)
 
